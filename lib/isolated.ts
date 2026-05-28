@@ -123,9 +123,14 @@ export function parseArgs(argv: string[]) {
   const help = args.includes("--help") || args.includes("-h");
   const daemon = args.includes("--daemon");
   const noWarm = args.includes("--no-warm");
+  // --effort <none|minimal|low|medium|high|xhigh>: per-turn reasoning override (warm daemon path)
+  const effortIdx = args.findIndex((a) => a === "--effort");
+  const effort = effortIdx !== -1 ? args[effortIdx + 1] : undefined;
   const flags = ["-q", "--quiet", "-i", "--interactive", "--help", "-h", "--daemon", "--no-warm"];
-  const prompt = args.filter((a) => !flags.includes(a)).join(" ");
-  return { interactive, quiet, help, daemon, noWarm, prompt, noArgs: args.length === 0 };
+  const prompt = args
+    .filter((a, i) => !flags.includes(a) && a !== "--effort" && i !== effortIdx + 1)
+    .join(" ");
+  return { interactive, quiet, help, daemon, noWarm, effort, prompt, noArgs: args.length === 0 };
 }
 
 // Renders streaming app-server JSON-RPC notifications (warm daemon path).
@@ -193,7 +198,7 @@ function renderEvent(event: any) {
 }
 
 export async function runProfile(config: ProfileConfig) {
-  const { interactive, quiet, help, daemon, noWarm, prompt, noArgs } = parseArgs(process.argv);
+  const { interactive, quiet, help, daemon, noWarm, effort, prompt, noArgs } = parseArgs(process.argv);
 
   if (help || noArgs) {
     console.log(`${config.name} — isolated codex agent (spark)
@@ -204,6 +209,7 @@ Usage:
   ${config.name} -i [prompt]         Interactive TUI in new cmux pane
   ${config.name} --daemon            Start warm daemon (auto-used by next ${config.name} call)
   ${config.name} --no-warm <prompt>  Force in-process (skip daemon even if running)
+  ${config.name} --effort <level>    Reasoning effort: none|minimal|low|medium|high|xhigh (warm daemon)
   ${config.name} --help              Show this help`);
     process.exit(0);
   }
@@ -271,7 +277,7 @@ Usage:
     try {
       await runViaDaemon(
         config.name,
-        { prompt, quiet, cwd: process.cwd() },
+        { prompt, quiet, cwd: process.cwd(), effort },
         {
           onNotification: (method, params) => {
             if (method === "item/agentMessage/delta") streamedAnswer = true;

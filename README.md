@@ -78,7 +78,12 @@ pro-gh "list my open PRs"
 
 # Force in-process (SDK exec, no daemon) even if a daemon is up
 pro-gh --no-warm "list my open PRs"
+
+# Per-prompt reasoning override (warm daemon path)
+pro-gh --effort minimal "what's my gh auth status"
 ```
+
+**`--effort <none|minimal|low|medium|high|xhigh>`** overrides reasoning effort for a single prompt. Lower is faster, but verified caveat: **`none` breaks tool use** — with zero reasoning the model answers trivial prompts ("say hi") but never decides to run commands, so a real `gh` task returns empty. `low` (the default) is the floor that reliably executes tools. Use `none`/`minimal` only for pure text replies.
 
 Measured on `gpt-5.3-codex-spark` low effort, prompt `"say hi"`, N=8 each (same session):
 
