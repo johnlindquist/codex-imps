@@ -1,5 +1,5 @@
 {
-  "name": "codex-profiles",
+  "name": "codex-daemons",
   "version": "0.2.0",
   "description": "Single-purpose, isolated Codex SDK agents for common CLI tools",
   "type": "module",

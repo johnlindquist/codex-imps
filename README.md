@@ -1,6 +1,6 @@
-# codex-profiles
+# codex-daemons
 
-Single-purpose, isolated [Codex SDK](https://www.npmjs.com/package/@openai/codex-sdk) agents for common CLI tools. Each profile runs with ~6K input tokens instead of the default ~22K — faster, cheaper, and focused.
+Single-purpose, isolated [Codex SDK](https://www.npmjs.com/package/@openai/codex-sdk) agents for common CLI tools. Each profile runs with ~6K input tokens instead of the default ~22K — faster, cheaper, and focused. Keep one warm per profile (`--daemon`) for ~2x lower latency.
 
 All profiles start with `pro-` so you can type `pro-` and tab-complete to see every available agent.
 
@@ -20,8 +20,8 @@ A profile is a single executable TypeScript file that wraps a CLI tool with an i
 
 ```bash
 # Requires bun (https://bun.sh) and @openai/codex CLI (authenticated)
-git clone https://github.com/johnlindquist/codex-profiles
-cd codex-profiles
+git clone https://github.com/johnlindquist/codex-daemons
+cd codex-daemons
 bun install
 bun link
 ```
