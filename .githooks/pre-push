@@ -1,0 +1,8 @@
+#!/bin/sh
+# Block pushes when smoke tests fail. Enable once per clone with:
+#   git config core.hooksPath .githooks
+echo "pre-push: running smoke tests (bun test)…"
+if ! bun test; then
+  echo "pre-push: tests failed — push aborted. Use 'git push --no-verify' to override." >&2
+  exit 1
+fi

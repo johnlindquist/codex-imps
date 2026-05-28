@@ -15,7 +15,8 @@
     "pro-create": "./create.ts"
   },
   "scripts": {
-    "create": "bun create.ts"
+    "create": "bun create.ts",
+    "test": "bun test"
   },
   "devDependencies": {
     "@types/bun": "latest"

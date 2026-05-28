@@ -56,7 +56,7 @@ pro-gh "list my open PRs"
 # Quiet mode — buffered, only shows the final answer
 pro-gh -q "list my open PRs"
 
-# Interactive TUI in a new cmux pane
+# Interactive codex TUI in this terminal
 pro-gh -i
 
 # Help
@@ -163,6 +163,24 @@ Each profile creates a temporary `CODEX_HOME` with only a symlinked `auth.json`.
 | Skills, plugins, hooks, memories | varies | Feature flags |
 
 See [docs/ISOLATION.md](docs/ISOLATION.md) for the full research with source line references.
+
+## Tests
+
+Fast, model-free smoke tests guard against arg-parsing and load regressions:
+
+```bash
+bun test
+```
+
+`test/parseargs.test.ts` exhaustively checks flag/prompt parsing (the spot a past `--effort` bug dropped the first prompt word). `test/cli-smoke.test.ts` loads every profile binary, checks `--help`/no-args, and confirms a real prompt survives parsing without paying a model turn.
+
+**Push gate:** enable the pre-push hook once per clone so failing tests block a push:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+(Override an individual push with `git push --no-verify`.)
 
 ## Requirements
 
