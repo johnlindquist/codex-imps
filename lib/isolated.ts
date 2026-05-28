@@ -127,8 +127,11 @@ export function parseArgs(argv: string[]) {
   const effortIdx = args.findIndex((a) => a === "--effort");
   const effort = effortIdx !== -1 ? args[effortIdx + 1] : undefined;
   const flags = ["-q", "--quiet", "-i", "--interactive", "--help", "-h", "--daemon", "--no-warm"];
+  // Drop the value following --effort only when --effort is actually present
+  // (effortIdx === -1 would otherwise make effortIdx+1 === 0 and strip the first prompt word).
+  const effortValueIdx = effortIdx !== -1 ? effortIdx + 1 : -1;
   const prompt = args
-    .filter((a, i) => !flags.includes(a) && a !== "--effort" && i !== effortIdx + 1)
+    .filter((a, i) => !flags.includes(a) && a !== "--effort" && i !== effortValueIdx)
     .join(" ");
   return { interactive, quiet, help, daemon, noWarm, effort, prompt, noArgs: args.length === 0 };
 }
