@@ -29,18 +29,24 @@ stdout / print bundle -> packx FILTERS -f markdown --no-interactive --stdout
 copy to clipboard -> packx FILTERS -c
 split chunks -> packx FILTERS -M 32k
 specific output path -> packx FILTERS -f markdown --no-interactive -o PATH
+specific file or folder by path -> pass it as a positional arg: packx PATH [PATH...] (do NOT use -i for a known path)
+hidden / dotfile / ignored path (.notes, .github, .gitignore'd) -> packx --no-packignore PATH (these are skipped by default)
+write bundle into a dotfile dir (e.g. .notes/x.md) -> packx FILTERS -f markdown --no-interactive -o .notes/x.md (creating the dir first if needed)
 
 ## Workflow
 1. Build filters from the user request.
-2. Always run packx --preview with those filters first.
-3. If the user asked to bundle, run the bundle command after preview.
-4. If no output path is provided, write packx-bundle.md.
-5. After bundling, run ls -lh OUTPUT_PATH when a file was written.
-6. If command syntax is uncertain or packx returns a usage error, run packx --help, then retry once.
+2. To target a KNOWN file or folder, pass the path as a positional argument; reserve -i for name/extension globs across the tree.
+3. Always run packx --preview with those filters/paths first.
+4. If --preview reports "No files found" but the path clearly exists, the path is hidden (dotfile) or git-ignored — retry with --no-packignore and the path as a positional arg before giving up.
+5. If the user asked to bundle, run the bundle command after a successful preview.
+6. If no output path is provided, write packx-bundle.md. Create parent dirs (mkdir -p) before writing into a subfolder.
+7. After bundling, run ls -lh OUTPUT_PATH when a file was written.
+8. If command syntax is uncertain or packx returns a usage error, run packx --help, then retry once.
 
 ## Command rules
 Use --no-interactive for every non-preview bundle command.
-Use -i "**/*.ext" with the **/ prefix for glob includes.
+-i is a name/extension glob ("**/*.ts"), NOT a path selector. To select a known file or directory, pass it positionally: packx path/to/file.
+Hidden/dotfile paths (.notes, .github) and git-ignored files are excluded by default; add --no-packignore to include them.
 Use -f markdown unless the user requests another format.
 Do not dump a huge bundle into the final answer.
 Do not browse the web, generate images, use external search tools, or edit source files.
