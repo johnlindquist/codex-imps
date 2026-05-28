@@ -8,6 +8,7 @@
 import { Codex, type CodexOptions, type ThreadOptions } from "@openai/codex-sdk";
 import { mkdirSync, symlinkSync, existsSync, rmSync, writeFileSync } from "fs";
 import { execSync } from "child_process";
+import { clientAvailable, runViaDaemon, runDaemon } from "./daemon.ts";
 
 export interface ProfileConfig {
   name: string;
@@ -120,14 +121,44 @@ export function parseArgs(argv: string[]) {
   const interactive = args.includes("-i") || args.includes("--interactive");
   const quiet = args.includes("-q") || args.includes("--quiet");
   const help = args.includes("--help") || args.includes("-h");
-  const prompt = args
-    .filter((a) => !["-q", "--quiet", "-i", "--interactive", "--help", "-h"].includes(a))
-    .join(" ");
-  return { interactive, quiet, help, prompt, noArgs: args.length === 0 };
+  const daemon = args.includes("--daemon");
+  const noWarm = args.includes("--no-warm");
+  const flags = ["-q", "--quiet", "-i", "--interactive", "--help", "-h", "--daemon", "--no-warm"];
+  const prompt = args.filter((a) => !flags.includes(a)).join(" ");
+  return { interactive, quiet, help, daemon, noWarm, prompt, noArgs: args.length === 0 };
+}
+
+function renderEvent(event: any) {
+  if (event.type === "item.started") {
+    const item = event.item;
+    if (item.type === "command_execution") {
+      process.stderr.write(`\x1b[2m$ ${item.command}\x1b[0m\n`);
+    }
+  } else if (event.type === "item.completed") {
+    const item = event.item;
+    if (item.type === "agent_message") {
+      console.log(item.text);
+    } else if (item.type === "command_execution") {
+      if (item.aggregated_output) {
+        process.stderr.write(`\x1b[2m${item.aggregated_output}\x1b[0m`);
+        if (!item.aggregated_output.endsWith("\n")) process.stderr.write("\n");
+      }
+      if (item.exit_code !== 0) {
+        process.stderr.write(`\x1b[31m→ exit ${item.exit_code}\x1b[0m\n`);
+      }
+    } else if (item.type === "reasoning" && item.text) {
+      process.stderr.write(`\x1b[2;3m${item.text}\x1b[0m\n`);
+    } else if (item.type === "todo_list") {
+      for (const todo of item.items) {
+        const mark = todo.completed ? "✓" : "○";
+        process.stderr.write(`\x1b[2m  ${mark} ${todo.text}\x1b[0m\n`);
+      }
+    }
+  }
 }
 
 export async function runProfile(config: ProfileConfig) {
-  const { interactive, quiet, help, prompt, noArgs } = parseArgs(process.argv);
+  const { interactive, quiet, help, daemon, noWarm, prompt, noArgs } = parseArgs(process.argv);
 
   if (help || noArgs) {
     console.log(`${config.name} — isolated codex agent (spark)
@@ -136,8 +167,15 @@ Usage:
   ${config.name} <prompt>            Run with streaming (default)
   ${config.name} -q <prompt>         Quiet mode (buffered, final answer only)
   ${config.name} -i [prompt]         Interactive TUI in new cmux pane
+  ${config.name} --daemon            Start warm daemon (auto-used by next ${config.name} call)
+  ${config.name} --no-warm <prompt>  Force in-process (skip daemon even if running)
   ${config.name} --help              Show this help`);
     process.exit(0);
+  }
+
+  if (daemon) {
+    await runDaemon(config);
+    return;
   }
 
   if (interactive) {
@@ -186,15 +224,33 @@ Usage:
     process.exit(1);
   }
 
-  const { startThread, cleanup } = createIsolatedCodex(config);
-
-  // Wire up AbortController so Ctrl+C kills the codex child process immediately
   const ac = new AbortController();
-  const onSignal = () => {
-    ac.abort();
-    cleanup();
-    process.exit(130);
-  };
+
+  // If a daemon is listening, route through it — saves bun+SDK boot + CODEX_HOME setup
+  if (!noWarm && clientAvailable(config.name)) {
+    const onSignal = () => { ac.abort(); process.exit(130); };
+    process.on("SIGINT", onSignal);
+    process.on("SIGTERM", onSignal);
+    try {
+      await runViaDaemon(
+        config.name,
+        { prompt, quiet, cwd: process.cwd() },
+        {
+          onEvent: (event) => renderEvent(event),
+          onFinal: (text) => { if (text) console.log(text); },
+          onError: (message) => { process.stderr.write(`\x1b[31mdaemon error: ${message}\x1b[0m\n`); },
+        },
+        ac.signal,
+      );
+    } finally {
+      process.off("SIGINT", onSignal);
+      process.off("SIGTERM", onSignal);
+    }
+    return;
+  }
+
+  const { startThread, cleanup } = createIsolatedCodex(config);
+  const onSignal = () => { ac.abort(); cleanup(); process.exit(130); };
   process.on("SIGINT", onSignal);
   process.on("SIGTERM", onSignal);
 
@@ -205,36 +261,8 @@ Usage:
       const turn = await thread.run(prompt, { signal: ac.signal });
       if (turn.finalResponse) console.log(turn.finalResponse);
     } else {
-      // Streaming is the default — show everything as it happens
       const { events } = await thread.runStreamed(prompt, { signal: ac.signal });
-      for await (const event of events) {
-        if (event.type === "item.started") {
-          const item = event.item;
-          if (item.type === "command_execution") {
-            process.stderr.write(`\x1b[2m$ ${item.command}\x1b[0m\n`);
-          }
-        } else if (event.type === "item.completed") {
-          const item = event.item;
-          if (item.type === "agent_message") {
-            console.log(item.text);
-          } else if (item.type === "command_execution") {
-            if (item.aggregated_output) {
-              process.stderr.write(`\x1b[2m${item.aggregated_output}\x1b[0m`);
-              if (!item.aggregated_output.endsWith("\n")) process.stderr.write("\n");
-            }
-            if (item.exit_code !== 0) {
-              process.stderr.write(`\x1b[31m→ exit ${item.exit_code}\x1b[0m\n`);
-            }
-          } else if (item.type === "reasoning" && item.text) {
-            process.stderr.write(`\x1b[2;3m${item.text}\x1b[0m\n`);
-          } else if (item.type === "todo_list") {
-            for (const todo of item.items) {
-              const mark = todo.completed ? "✓" : "○";
-              process.stderr.write(`\x1b[2m  ${mark} ${todo.text}\x1b[0m\n`);
-            }
-          }
-        }
-      }
+      for await (const event of events) renderEvent(event);
     }
   } finally {
     process.off("SIGINT", onSignal);
