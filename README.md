@@ -67,37 +67,37 @@ pro-gh --help
 
 ### Warm mode (lower latency)
 
-Start a long-running daemon for any profile; subsequent calls auto-detect the socket and route through it, skipping bun startup + SDK import + isolated `CODEX_HOME` setup.
+Start a long-running daemon for any profile; subsequent calls auto-detect the socket and route through it. The daemon holds **one persistent `codex app-server` process** alive — so process spawn, auth/config load, and the WebSocket connection + prewarm are all paid **once at startup**, not per prompt. Each call is a fresh `thread/start` + `turn/start` on the already-warm process.
 
 ```bash
 # Start the daemon (foreground — backgrounds nicely with `&` or your supervisor)
 pro-gh --daemon
 
-# In another shell — same exact command, just faster
+# In another shell — same exact command, just faster, answer streams token-by-token
 pro-gh "list my open PRs"
 
-# Force in-process even if daemon is up
+# Force in-process (SDK exec, no daemon) even if a daemon is up
 pro-gh --no-warm "list my open PRs"
 ```
 
-Measured on `gpt-5.3-codex-spark` low effort, prompt `"say hi"`, N=8 each:
+Measured on `gpt-5.3-codex-spark` low effort, prompt `"say hi"`, N=8 each (same session):
 
-| Mode | Median TTFT | Mean TTFT | Range |
+| Mode | Median total | Mean | Range |
 |---|---|---|---|
-| Cold (no daemon) | 5444 ms | 5873 ms | 5007–8628 |
-| Warm (via daemon) | 4907 ms | 5079 ms | 4533–5694 |
+| Cold (SDK `codex exec` per request) | 6847 ms | 7042 ms | 4656–9901 |
+| Warm (app-server daemon) | 3187 ms | 3108 ms | 2095–3978 |
 
-Savings ~500 ms median come from skipping the client's bun+SDK boot. The dominant remaining cost (~4.5s) is the model API roundtrip — every request still spawns a fresh `codex exec` inside the daemon and sends ~6K tokens to OpenAI. To go below ~4.5s you'd need session caching via `resumeThread` (different optimization axis).
-
-Run-to-run variance is high relative to the savings — collect ≥8 samples before drawing conclusions from your own benchmarks.
+**~2x faster.** The first protocol frame returns in ~1 ms (the connection is hot and waiting); the remaining seconds are pure model inference on your prompt — the one cost that can't be pre-paid, since the model hasn't seen the prompt until you send it. Run-to-run variance is high (backend scheduling), so collect ≥8 samples before drawing conclusions.
 
 Benchmark it yourself:
 
 ```bash
-bun bench.ts pro-gh "say hi" --runs 5            # cold
+bun bench.ts pro-gh "say hi" --runs 8            # cold
 pro-gh --daemon &                                 # warm
-bun bench.ts pro-gh "say hi" --runs 5 --warm
+bun bench.ts pro-gh "say hi" --runs 8 --warm
 ```
+
+Want to see the raw warm-floor breakdown (setup cost, first-frame vs first-content-token, fresh-thread vs same-thread)? Run `bun probe-appserver.ts`.
 
 ### What you see while streaming
 

@@ -128,6 +128,41 @@ export function parseArgs(argv: string[]) {
   return { interactive, quiet, help, daemon, noWarm, prompt, noArgs: args.length === 0 };
 }
 
+// Renders streaming app-server JSON-RPC notifications (warm daemon path).
+// Answer tokens stream to stdout; reasoning/commands/output go to stderr.
+function renderAppServerNotif(method: string, params: any) {
+  switch (method) {
+    case "item/agentMessage/delta":
+      process.stdout.write(params?.delta ?? "");
+      break;
+    case "item/reasoning/textDelta":
+    case "item/reasoning/summaryTextDelta":
+      process.stderr.write(`\x1b[2;3m${params?.delta ?? ""}\x1b[0m`);
+      break;
+    case "item/started":
+      if (params?.item?.type === "commandExecution") {
+        process.stderr.write(`\x1b[2m$ ${params.item.command}\x1b[0m\n`);
+      }
+      break;
+    case "item/commandExecution/outputDelta":
+      if (params?.delta) process.stderr.write(`\x1b[2m${params.delta}\x1b[0m`);
+      break;
+    case "item/completed":
+      if (params?.item?.type === "commandExecution" && params.item.exitCode && params.item.exitCode !== 0) {
+        process.stderr.write(`\x1b[31m→ exit ${params.item.exitCode}\x1b[0m\n`);
+      }
+      break;
+    case "turn/plan/updated":
+      if (Array.isArray(params?.plan)) {
+        for (const step of params.plan) {
+          const mark = step.status === "completed" ? "✓" : "○";
+          process.stderr.write(`\x1b[2m  ${mark} ${step.step ?? step.text ?? ""}\x1b[0m\n`);
+        }
+      }
+      break;
+  }
+}
+
 function renderEvent(event: any) {
   if (event.type === "item.started") {
     const item = event.item;
@@ -226,18 +261,27 @@ Usage:
 
   const ac = new AbortController();
 
-  // If a daemon is listening, route through it — saves bun+SDK boot + CODEX_HOME setup
+  // If a warm daemon is listening, route through it — skips process spawn +
+  // auth/config load + WebSocket prewarm (paid once at daemon start).
   if (!noWarm && clientAvailable(config.name)) {
     const onSignal = () => { ac.abort(); process.exit(130); };
     process.on("SIGINT", onSignal);
     process.on("SIGTERM", onSignal);
+    let streamedAnswer = false;
     try {
       await runViaDaemon(
         config.name,
         { prompt, quiet, cwd: process.cwd() },
         {
-          onEvent: (event) => renderEvent(event),
-          onFinal: (text) => { if (text) console.log(text); },
+          onNotification: (method, params) => {
+            if (method === "item/agentMessage/delta") streamedAnswer = true;
+            renderAppServerNotif(method, params);
+          },
+          onFinal: (text) => {
+            // In streaming mode the answer already printed via deltas; just close the line.
+            if (streamedAnswer) process.stdout.write("\n");
+            else if (text) console.log(text);
+          },
           onError: (message) => { process.stderr.write(`\x1b[31mdaemon error: ${message}\x1b[0m\n`); },
         },
         ac.signal,
