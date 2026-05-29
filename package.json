@@ -5,6 +5,7 @@
   "type": "module",
   "bin": {
     "pro-cmux": "./profiles/pro-cmux",
+    "pro-git": "./profiles/pro-git",
     "pro-gh": "./profiles/pro-gh",
     "pro-karabiner": "./profiles/pro-karabiner",
     "pro-packx": "./profiles/pro-packx",
