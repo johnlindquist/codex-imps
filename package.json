@@ -14,6 +14,7 @@
     "pro-jq": "./profiles/pro-jq",
     "pro-rg": "./profiles/pro-rg",
     "pro-psql": "./profiles/pro-psql",
+    "pro-gcloud": "./profiles/pro-gcloud",
     "pro-gh": "./profiles/pro-gh",
     "pro-karabiner": "./profiles/pro-karabiner",
     "pro-packx": "./profiles/pro-packx",

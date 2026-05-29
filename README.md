@@ -46,6 +46,7 @@ bun profiles/pro-gh "list my open PRs"
 | `pro-jq` | [jq](https://jqlang.github.io/jq/) | Inspect, filter, and transform JSON; build & test precise filters |
 | `pro-rg` | [ripgrep](https://github.com/BurntSushi/ripgrep) | Fast codebase search (read-only): symbols, TODOs, imports, configs |
 | `pro-psql` | [psql](https://www.postgresql.org/docs/current/app-psql.html) | PostgreSQL schema, indexes, query plans, stats, locks (guarded writes) |
+| `pro-gcloud` | [gcloud](https://cloud.google.com/sdk/gcloud) | Google Cloud project/account/resource inventory (guarded mutations) |
 | `pro-gh` | [gh](https://cli.github.com) | GitHub CLI (issues, PRs, releases, actions) |
 | `pro-karabiner` | [goku](https://github.com/yqrashawn/GokuRakuJoTu) | Karabiner-Elements config (karabiner.edn) |
 | `pro-packx` | [packx](https://www.npmjs.com/package/packx) | AI context bundling |
