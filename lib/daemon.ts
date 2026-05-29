@@ -19,6 +19,7 @@
 
 import { createServer, createConnection, type Socket } from "net";
 import { existsSync, unlinkSync } from "fs";
+import { spawn } from "child_process";
 import type { ProfileConfig } from "./isolated.ts";
 import { AppServerClient } from "./appserver.ts";
 
@@ -115,6 +116,51 @@ export interface ClientEventHandlers {
 
 export function clientAvailable(name: string): boolean {
   return existsSync(socketPath(name));
+}
+
+/** Try to open the daemon socket; resolves true only if a live listener accepts. */
+function tryConnect(sock: string, timeoutMs: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = createConnection(sock);
+    const done = (ok: boolean) => { clearTimeout(timer); socket.destroy(); resolve(ok); };
+    const timer = setTimeout(() => done(false), timeoutMs);
+    socket.once("connect", () => done(true));
+    socket.once("error", () => done(false));
+  });
+}
+
+/**
+ * Ensure a warm daemon is running and reachable for this profile, auto-starting
+ * one in the background if needed. This makes warm mode the DEFAULT: the first
+ * call pays the startup cost once, then every later call routes through the
+ * persistent app-server for instant responses. Returns true if a live daemon is
+ * reachable, false if startup failed (caller should fall back to a cold run).
+ */
+export async function ensureDaemon(config: ProfileConfig, readyTimeoutMs = 30000): Promise<boolean> {
+  const sock = socketPath(config.name);
+
+  // Already warm and accepting connections?
+  if (existsSync(sock) && (await tryConnect(sock, 500))) return true;
+
+  // Spawn a detached background daemon: re-run THIS executable with --daemon.
+  // It cleans up any stale socket on start, then listens once the app-server is warm.
+  try {
+    const child = spawn(process.argv[0], [process.argv[1], "--daemon"], {
+      detached: true,
+      stdio: "ignore",
+    });
+    child.unref();
+  } catch {
+    return false;
+  }
+
+  // Poll until the daemon accepts connections (= app-server warm) or we give up.
+  const deadline = Date.now() + readyTimeoutMs;
+  while (Date.now() < deadline) {
+    if (await tryConnect(sock, 500)) return true;
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  return false;
 }
 
 export async function runViaDaemon(

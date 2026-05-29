@@ -1,6 +1,6 @@
 # codex-daemons
 
-Single-purpose, isolated [Codex SDK](https://www.npmjs.com/package/@openai/codex-sdk) agents for common CLI tools. Each profile runs with ~6K input tokens instead of the default ~22K — faster, cheaper, and focused. Keep one warm per profile (`--daemon`) for ~2x lower latency.
+Single-purpose, isolated [Codex SDK](https://www.npmjs.com/package/@openai/codex-sdk) agents for common CLI tools. Each profile runs with ~6K input tokens instead of the default ~22K — faster, cheaper, and focused. Warm mode is **on by default**: the first call auto-starts a background daemon and every later call reuses it for ~2x lower latency (opt out with `--no-warm`).
 
 All profiles start with `pro-` so you can type `pro-` and tab-complete to see every available agent.
 
@@ -75,23 +75,28 @@ pro-gh --help
 # Ctrl+C to stop at any time — kills agent + commands cleanly
 ```
 
-### Warm mode (lower latency)
+### Warm mode (on by default)
 
-Start a long-running daemon for any profile; subsequent calls auto-detect the socket and route through it. The daemon holds **one persistent `codex app-server` process** alive — so process spawn, auth/config load, and the WebSocket connection + prewarm are all paid **once at startup**, not per prompt. Each call is a fresh `thread/start` + `turn/start` on the already-warm process.
+**Warm mode is the default — no flags, no setup.** The first call to any profile auto-starts a background daemon and routes through it; every later call reuses that same daemon for instant responses. The daemon holds **one persistent `codex app-server` process** alive — so process spawn, auth/config load, and the WebSocket connection + prewarm are all paid **once** on that first call, not per prompt. Each call is a fresh `thread/start` + `turn/start` on the already-warm process.
 
 ```bash
-# Start the daemon (foreground — backgrounds nicely with `&` or your supervisor)
-pro-gh --daemon
-
-# In another shell — same exact command, just faster, answer streams token-by-token
+# First call auto-spawns a background daemon, answers, and leaves it warm
 pro-gh "list my open PRs"
 
-# Force in-process (SDK exec, no daemon) even if a daemon is up
+# Every later call routes through the warm daemon automatically — just faster
+pro-gh "list my open issues"
+
+# Opt OUT: force a cold in-process run (SDK exec, no daemon)
 pro-gh --no-warm "list my open PRs"
+
+# Run the daemon in the foreground instead (for a supervisor like launchd/systemd)
+pro-gh --daemon
 
 # Per-prompt reasoning override (warm daemon path)
 pro-gh --effort minimal "what's my gh auth status"
 ```
+
+The auto-started daemon is detached and persists after the call returns, so it stays warm for your next prompt. Pass `--no-warm` whenever you want a one-off run that doesn't start or use a daemon.
 
 **`--effort <none|minimal|low|medium|high|xhigh>`** overrides reasoning effort for a single prompt. Lower is faster, but verified caveat: **`none` breaks tool use** — with zero reasoning the model answers trivial prompts ("say hi") but never decides to run commands, so a real `gh` task returns empty. `low` (the default) is the floor that reliably executes tools. Use `none`/`minimal` only for pure text replies.
 

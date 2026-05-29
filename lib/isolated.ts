@@ -8,7 +8,7 @@
 import { Codex, type CodexOptions, type ThreadOptions } from "@openai/codex-sdk";
 import { mkdirSync, symlinkSync, existsSync, rmSync } from "fs";
 import { spawn } from "child_process";
-import { clientAvailable, runViaDaemon, runDaemon } from "./daemon.ts";
+import { ensureDaemon, runViaDaemon, runDaemon } from "./daemon.ts";
 
 export interface ProfileConfig {
   name: string;
@@ -207,13 +207,16 @@ export async function runProfile(config: ProfileConfig) {
     console.log(`${config.name} — isolated codex agent (spark)
 
 Usage:
-  ${config.name} <prompt>            Run with streaming (default)
+  ${config.name} <prompt>            Run with streaming (auto-warms a daemon for instant responses)
   ${config.name} -q <prompt>         Quiet mode (buffered, final answer only)
   ${config.name} -i [prompt]         Interactive codex TUI in this terminal
-  ${config.name} --daemon            Start warm daemon (auto-used by next ${config.name} call)
-  ${config.name} --no-warm <prompt>  Force in-process (skip daemon even if running)
+  ${config.name} --no-warm <prompt>  Opt out: force a cold in-process run (no daemon)
+  ${config.name} --daemon            Run the warm daemon in the foreground (for supervisors)
   ${config.name} --effort <level>    Reasoning effort: none|minimal|low|medium|high|xhigh (warm daemon)
-  ${config.name} --help              Show this help`);
+  ${config.name} --help              Show this help
+
+By default the first call auto-starts a background daemon and every call routes
+through it for ~2x lower latency. Use --no-warm to bypass it for a one-off run.`);
     process.exit(0);
   }
 
@@ -247,13 +250,16 @@ Usage:
 
   const ac = new AbortController();
 
-  // If a warm daemon is listening, route through it — skips process spawn +
-  // auth/config load + WebSocket prewarm (paid once at daemon start).
-  if (!noWarm && clientAvailable(config.name)) {
+  // Warm by default: auto-start (and reuse) a background daemon so every call
+  // routes through the persistent app-server — skips process spawn + auth/config
+  // load + WebSocket prewarm (paid once at daemon start). Opt out with --no-warm.
+  // If the daemon can't be brought up, fall through to a cold in-process run.
+  if (!noWarm && (await ensureDaemon(config))) {
     const onSignal = () => { ac.abort(); process.exit(130); };
     process.on("SIGINT", onSignal);
     process.on("SIGTERM", onSignal);
     let streamedAnswer = false;
+    let routed = true;
     try {
       await runViaDaemon(
         config.name,
@@ -272,11 +278,14 @@ Usage:
         },
         ac.signal,
       );
+    } catch {
+      // Daemon died or the connection dropped mid-flight — fall back to cold.
+      routed = false;
     } finally {
       process.off("SIGINT", onSignal);
       process.off("SIGTERM", onSignal);
     }
-    return;
+    if (routed) return;
   }
 
   const { startThread, cleanup } = createIsolatedCodex(config);
