@@ -39,6 +39,7 @@ bun profiles/pro-gh "list my open PRs"
 | `pro-cmux` | [cmux](https://github.com/manaflow-ai/cmux) | Terminal workspace automation |
 | `pro-git` | [git](https://git-scm.com) | Local Git (status, diff, branches, log, stash, commit, safe sync) |
 | `pro-docker` | [docker](https://docs.docker.com/engine/reference/commandline/cli/) | Containers, images, volumes, networks, Compose (guarded lifecycle) |
+| `pro-npm` | [npm](https://docs.npmjs.com/cli) | Node scripts, deps, package metadata, installs, audits |
 | `pro-gh` | [gh](https://cli.github.com) | GitHub CLI (issues, PRs, releases, actions) |
 | `pro-karabiner` | [goku](https://github.com/yqrashawn/GokuRakuJoTu) | Karabiner-Elements config (karabiner.edn) |
 | `pro-packx` | [packx](https://www.npmjs.com/package/packx) | AI context bundling |
