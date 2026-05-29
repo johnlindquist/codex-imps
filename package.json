@@ -8,6 +8,7 @@
     "pro-git": "./profiles/pro-git",
     "pro-docker": "./profiles/pro-docker",
     "pro-npm": "./profiles/pro-npm",
+    "pro-kubectl": "./profiles/pro-kubectl",
     "pro-gh": "./profiles/pro-gh",
     "pro-karabiner": "./profiles/pro-karabiner",
     "pro-packx": "./profiles/pro-packx",
