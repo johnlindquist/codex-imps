@@ -4,7 +4,7 @@ import { createHash } from "crypto";
 import type { ProfileConfig } from "./isolated.ts";
 
 export interface SelfImproveConfig {
-  /** Opt in to local self-improvement for this profile. Defaults to false. */
+  /** Local self-improvement is on by default. Set false to opt out. */
   enabled?: boolean;
   /** Override the lessons overlay file path. Default: `<executable>.lessons.md`. */
   lessonsPath?: string;
@@ -84,7 +84,7 @@ export function resolveSelfImprove(
 ): ResolvedSelfImprove {
   const selfPath = currentProfileSelfPath();
   const libDir = profileLibDir(selfPath);
-  const enabled = config.selfImprove?.enabled === true || envEnablesProfile(config.name, env);
+  const enabled = config.selfImprove?.enabled !== false || envEnablesProfile(config.name, env);
   const mode = env.CODEX_DAEMON_SELF_IMPROVE_RECEIPTS === "1" ? "receipt" : config.selfImprove?.mode || "lesson";
   const lessonsPath = config.selfImprove?.lessonsPath || defaultLessonsPath(selfPath);
   const receiptsPath = config.selfImprove?.receiptsPath || `${lessonsPath}.debug.jsonl`;

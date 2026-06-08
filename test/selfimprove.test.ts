@@ -99,10 +99,11 @@ function cfg(over: Partial<ProfileConfig> = {}): ProfileConfig {
   return { name: "pro-selfimprove", baseInstructions: "base", developerInstructions: "dev", ...over };
 }
 
-test("self-improvement is disabled by default and enabled by profile or env", () => {
+test("self-improvement is enabled by default and can be explicitly disabled", () => {
   expect(hooksEnabled(cfg())).toBe(false);
   expect(hooksEnabled(cfg({ selfImprove: { enabled: true } }))).toBe(false);
-  expect(resolveSelfImprove(cfg()).enabled).toBe(false);
+  expect(resolveSelfImprove(cfg()).enabled).toBe(true);
+  expect(resolveSelfImprove(cfg({ selfImprove: { enabled: false } })).enabled).toBe(false);
   expect(resolveSelfImprove(cfg({ selfImprove: { enabled: true } })).enabled).toBe(true);
   expect(resolveSelfImprove(cfg({ name: "pro-gh" }), { CODEX_DAEMON_SELF_IMPROVE: "pro-gh" }).enabled).toBe(true);
 });
@@ -137,24 +138,24 @@ test("prepareIsolatedCodexHome exposes env but no hook config for daemon-side se
   expect(existsSync(lessons)).toBe(false);
 });
 
-test("prepareIsolatedCodexHome writes no hook config when disabled", () => {
+test("prepareIsolatedCodexHome writes no hook config or env when explicitly disabled", () => {
   const root = tmp();
   const home = join(root, "codex-home");
-  const runtime = prepareIsolatedCodexHome(cfg(), home, root);
+  const runtime = prepareIsolatedCodexHome(cfg({ selfImprove: { enabled: false } }), home, root);
   expect(runtime.hooksEnabled).toBe(false);
   expect(runtime.extraEnv).toEqual({});
   expect(existsSync(join(home, "hooks.json"))).toBe(false);
   expect(existsSync(join(home, "config.toml"))).toBe(false);
 });
 
-test("applyLessonOverlay is a no-op when disabled or lessons file is empty", () => {
+test("applyLessonOverlay is a no-op when explicitly disabled or lessons file is empty", () => {
   const root = tmp();
   const lessons = join(root, "p.lessons.md");
   writeFileSync(lessons, "- ignored while disabled\n");
-  expect(applyLessonOverlay(cfg({ selfImprove: { lessonsPath: lessons } })).developerInstructions).toBe("dev");
+  expect(applyLessonOverlay(cfg({ selfImprove: { enabled: false, lessonsPath: lessons } })).developerInstructions).toBe("dev");
 
   writeFileSync(lessons, "");
-  expect(applySelfImproveOverlay(cfg({ selfImprove: { enabled: true, lessonsPath: lessons } })).developerInstructions).toBe("dev");
+  expect(applySelfImproveOverlay(cfg({ selfImprove: { lessonsPath: lessons } })).developerInstructions).toBe("dev");
 });
 
 test("applyLessonOverlay appends lessons once, idempotently", () => {

@@ -56,7 +56,7 @@ test("editing an active self-improvement lessons overlay changes the fingerprint
 
 test("editing a disabled self-improvement lessons sidecar does not change the fingerprint", () => {
   const lessons = `${exe}.lessons.md`;
-  const disabled = cfg();
+  const disabled = cfg({ selfImprove: { enabled: false } });
   const before = sourceFingerprint(disabled);
   writeFileSync(lessons, "- ignored while disabled\n");
   expect(sourceFingerprint(disabled)).toBe(before);

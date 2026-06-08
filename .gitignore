@@ -2,6 +2,7 @@ node_modules/
 bun.lock
 *.tgz
 .DS_Store
+tmp/
 
 # Self-improving daemon runtime artifacts (written next to the profile executable)
 daemons/*.lessons.md

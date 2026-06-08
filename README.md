@@ -107,9 +107,9 @@ The auto-started daemon is detached and persists after the call returns, so it s
 
 ### 🧪 Experimental: a self-improving daemon (`pro-selfimprove`)
 
-> **Status: experimental.** Added recently alongside the hot-reload work (see commits `Make warm daemon mode the default` → `Add pro-browser-automate + self-improve & hot-reload work`). It is **opt-in per profile and off everywhere else** — no existing `pro-*` daemon changes behavior. Treat it as a research toy: a daemon that rewrites its own prompt is inherently unpredictable, so don't point it at anything you can't afford to have it nudge over time. See the caveats below before relying on it.
+> **Status: experimental.** Added recently alongside the hot-reload work (see commits `Make warm daemon mode the default` → `Add pro-browser-automate + self-improve & hot-reload work`). It is now **on by default for every profile** through the shared runtime. Treat it as a research feature: a daemon that rewrites its own prompt is inherently unpredictable, so don't point it at anything you can't afford to have it nudge over time. See the caveats below before relying on it.
 
-The shared runtime includes self-improvement support for every daemon, but it is **opt-in per profile**. `pro-selfimprove` is the test profile that has it enabled. Opt in with `selfImprove: { enabled: true }` on a profile, or temporarily for local trials with `CODEX_DAEMON_SELF_IMPROVE=pro-name`. When a turn ends, the runtime can scan failed command executions (non-zero exits) and append a concise **lesson** to a `daemons/<name>.lessons.md` overlay file. On startup that profile folds the overlay into its `developerInstructions`, and the active lessons file is part of the hot-reload fingerprint — so the **next prompt restarts the daemon with the new lesson baked into its own prompt**. Over time it accumulates operating guidance shaped by what actually went wrong.
+The shared runtime includes self-improvement support for every daemon. Opt out with `selfImprove: { enabled: false }` on a profile. When a turn ends, the runtime can scan failed command executions (non-zero exits) and append a concise **lesson** to a `daemons/<name>.lessons.md` overlay file. On startup that profile folds the overlay into its `developerInstructions`, and the active lessons file is part of the hot-reload fingerprint — so the **next prompt restarts the daemon with the new lesson baked into its own prompt**. Over time it accumulates operating guidance shaped by what actually went wrong.
 
 ```bash
 pro-selfimprove "run a command that doesn't exist"   # turn 1: fails, records a lesson
@@ -117,7 +117,7 @@ cat daemons/pro-selfimprove.lessons.md               # see what it learned
 pro-selfimprove "what have you learned so far?"        # turn 2: daemon restarted, lesson now in its instructions
 ```
 
-How it knows itself: enabled self-improving profiles receive `CODEX_DAEMON_SELF_PATH`, `CODEX_DAEMON_LIB_DIR`, and `CODEX_DAEMON_LESSONS_PATH` in the spawned Codex environment. Disabled profiles receive none of that self-improvement env. Lessons are deduped by a content signature, common secrets are redacted before rendering, and the writer fails open — a broken self-improvement step never breaks your turn.
+How it knows itself: self-improving profiles receive `CODEX_DAEMON_SELF_PATH`, `CODEX_DAEMON_LIB_DIR`, and `CODEX_DAEMON_LESSONS_PATH` in the spawned Codex environment. Opted-out profiles receive none of that self-improvement env. Lessons are deduped by a content signature, common secrets are redacted before rendering, and the writer fails open — a broken self-improvement step never breaks your turn.
 
 **Why it's experimental (and the sharp edges):**
 
