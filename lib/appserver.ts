@@ -17,8 +17,8 @@
 import { spawn, type ChildProcess } from "child_process";
 import { rmSync } from "fs";
 import type { ProfileConfig } from "./isolated.ts";
-import { applyLessonOverlay, hooksEnabled, prepareIsolatedCodexHome } from "./codex-runtime.ts";
-import { recordLessons, type Failure } from "./self-improve-stop.ts";
+import { applyLessonOverlay, prepareIsolatedCodexHome } from "./codex-runtime.ts";
+import { createSelfImproveObserver } from "./self-improve.ts";
 
 export interface TurnHandlers {
   /** Raw app-server notification (method + params). */
@@ -35,12 +35,7 @@ export class AppServerClient {
   private config: ProfileConfig;
   private model: string;
   private ready = false;
-  // Self-improvement: when enabled, detect failed tool calls in the turn stream
-  // and append lessons to this overlay. (Codex's own Stop hook does not fire for
-  // non-interactive app-server turns in the shipped build, so the daemon — which
-  // sees every command's exit code on the wire — drives the loop itself.)
-  private selfImprove = false;
-  private lessonsPath?: string;
+  private hooksEnabled = false;
 
   constructor(config: ProfileConfig) {
     // Fold accumulated self-improvement lessons into developerInstructions once,
@@ -55,8 +50,7 @@ export class AppServerClient {
     const realHome = process.env.HOME!;
     // Symlinks auth, and (when self-improvement is enabled) writes the hook config.
     const runtime = prepareIsolatedCodexHome(this.config, this.isolatedHome, realHome);
-    this.selfImprove = runtime.hooksEnabled;
-    this.lessonsPath = runtime.lessonsPath;
+    this.hooksEnabled = runtime.hooksEnabled;
 
     this.child = spawn("codex", ["app-server"], {
       env: {
@@ -160,9 +154,9 @@ export class AppServerClient {
         // hooks can't be approved via a TUI — bypass trust to let them run.
         // Passed here (not just config.toml) because thread/start config does
         // not inherit the on-disk bypass flag.
-        bypass_hook_trust: hooksEnabled(this.config),
+        bypass_hook_trust: this.hooksEnabled,
         features: {
-          plugins: false, hooks: hooksEnabled(this.config), memories: false, apps: false,
+          plugins: false, hooks: this.hooksEnabled, memories: false, apps: false,
           image_generation: false, tool_search: false, tool_suggest: false,
         },
       },
@@ -179,48 +173,33 @@ export class AppServerClient {
   async runTurn(prompt: string, handlers: TurnHandlers, opts?: { cwd?: string; effort?: string }): Promise<string> {
     if (!this.ready) throw new Error("app-server not ready");
     const threadId = await this.startThread();
+    const observer = createSelfImproveObserver(this.config);
 
     return new Promise<string>((resolve, reject) => {
       let finalText = "";
-      const failures: Failure[] = [];
       const t = setTimeout(() => {
         this.handlers.delete(h);
+        observer.finish({ status: "timeout", transport: "app-server" });
         reject(new Error(`turn timeout\nstderr:\n${this.stderrTail}`));
       }, 120000);
       const h = (msg: any) => {
         if (msg.__exit !== undefined) {
           clearTimeout(t); this.handlers.delete(h);
+          observer.finish({ status: "app-server-exit", transport: "app-server", code: msg.__exit });
           reject(new Error(`app-server exited mid-turn (code ${msg.__exit})\nstderr:\n${this.stderrTail}`));
           return;
         }
         if (!msg.method) return;
+        observer.onAppServerNotification(msg.method, msg.params);
         handlers.onNotification?.(msg.method, msg.params);
         if (msg.method === "item/agentMessage/delta") {
           finalText += msg.params?.delta ?? "";
         } else if (msg.method === "item/completed" && msg.params?.item?.type === "agentMessage") {
           // Authoritative full text (covers non-streamed/low-effort paths)
           if (msg.params.item.text) finalText = msg.params.item.text;
-        } else if (msg.method === "item/completed" && msg.params?.item?.type === "commandExecution") {
-          // Self-improvement signal: a tool/command that exited non-zero.
-          const item = msg.params.item;
-          if (this.selfImprove && typeof item.exitCode === "number" && item.exitCode !== 0) {
-            failures.push({
-              kind: "nonzero-exit",
-              path: "stream",
-              exit: item.exitCode,
-              command: typeof item.command === "string" ? item.command : undefined,
-              message: typeof item.aggregatedOutput === "string" ? item.aggregatedOutput : undefined,
-            });
-          }
         } else if (msg.method === "turn/completed") {
           clearTimeout(t); this.handlers.delete(h);
-          // Record lessons from this turn's failures before resolving. Best-effort:
-          // self-improvement must never break the turn. The next prompt's
-          // ensureDaemon() sees the changed overlay (hashed by sourceFingerprint)
-          // and restarts this daemon so the lessons load into developerInstructions.
-          if (this.selfImprove && this.lessonsPath && failures.length) {
-            try { recordLessons(this.lessonsPath, failures); } catch {}
-          }
+          observer.finish({ status: "completed", transport: "app-server" });
           resolve(finalText);
         }
       };

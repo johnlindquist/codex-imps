@@ -11,10 +11,10 @@ import { spawn } from "child_process";
 import { ensureDaemon, runViaDaemon, runDaemon } from "./daemon.ts";
 import {
   applyLessonOverlay,
-  hooksEnabled,
   prepareIsolatedCodexHome,
   type SelfImproveConfig,
 } from "./codex-runtime.ts";
+import { createSelfImproveObserver } from "./self-improve.ts";
 
 export interface ProfileConfig {
   name: string;
@@ -63,11 +63,11 @@ export function createIsolatedCodex(rawConfig: ProfileConfig) {
       web_search: "disabled",
 
       // See appserver.ts: bypass hook trust so user hooks run non-interactively.
-      bypass_hook_trust: hooksEnabled(config),
+      bypass_hook_trust: runtime.hooksEnabled,
 
       features: {
         plugins: false,
-        hooks: hooksEnabled(config),
+        hooks: runtime.hooksEnabled,
         memories: false,
         apps: false,
         image_generation: false,
@@ -95,12 +95,12 @@ export function createIsolatedCodex(rawConfig: ProfileConfig) {
   return { codex, startThread, cleanup, model, isolatedHome };
 }
 
-function buildInteractiveFlags(config: ProfileConfig): string[] {
+function buildInteractiveFlags(config: ProfileConfig, hooksOn = false): string[] {
   const model = config.model || process.env.CODEX_PROFILE_MODEL || "gpt-5.3-codex-spark";
   return [
     "--dangerously-bypass-approvals-and-sandbox",
     "--disable", "plugins",
-    ...(hooksEnabled(config)
+    ...(hooksOn
       ? ["-c", "features.hooks=true", "-c", "bypass_hook_trust=true"]
       : ["--disable", "hooks"]),
     "--disable", "memories",
@@ -241,15 +241,37 @@ through it for ~2x lower latency. Use --no-warm to bypass it for a one-off run.`
   if (interactive) {
     // Launch the codex interactive TUI right here in the current terminal.
     // No cmux, no surfaces — the profile knows nothing about any terminal manager.
-    const flags = buildInteractiveFlags(config);
+    const realHome = process.env.HOME!;
+    const isolatedHome = `/tmp/codex-profile-${config.name}-${process.pid}-interactive`;
+    const runtime = prepareIsolatedCodexHome(config, isolatedHome, realHome);
+    const flags = buildInteractiveFlags(config, runtime.hooksEnabled);
     const args = [
       ...flags,
       "-c", `developer_instructions="${tomlEscape(config.developerInstructions)}"`,
       ...(prompt ? [prompt] : []),
     ];
-    const child = spawn("codex", args, { stdio: "inherit", cwd: process.cwd() });
-    child.on("exit", (code, signal) => process.exit(signal ? 1 : code ?? 0));
+    const cleanupInteractive = () => {
+      try {
+        rmSync(isolatedHome, { recursive: true, force: true });
+      } catch {}
+    };
+    const child = spawn("codex", args, {
+      stdio: "inherit",
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        HOME: realHome,
+        CODEX_HOME: isolatedHome,
+        ...config.extraEnv,
+        ...runtime.extraEnv,
+      },
+    });
+    child.on("exit", (code, signal) => {
+      cleanupInteractive();
+      process.exit(signal ? 1 : code ?? 0);
+    });
     child.on("error", (e) => {
+      cleanupInteractive();
       console.error(`${config.name}: failed to launch codex: ${e.message}`);
       process.exit(1);
     });
@@ -307,14 +329,20 @@ through it for ~2x lower latency. Use --no-warm to bypass it for a one-off run.`
   process.on("SIGTERM", onSignal);
 
   const thread = startThread();
+  const observer = createSelfImproveObserver(config);
 
   try {
     if (quiet) {
       const turn = await thread.run(prompt, { signal: ac.signal });
       if (turn.finalResponse) console.log(turn.finalResponse);
+      observer.finish({ status: "completed", transport: "sdk-quiet" });
     } else {
       const { events } = await thread.runStreamed(prompt, { signal: ac.signal });
-      for await (const event of events) renderEvent(event);
+      for await (const event of events) {
+        observer.onSdkEvent(event);
+        renderEvent(event);
+      }
+      observer.finish({ status: "completed", transport: "sdk-stream" });
     }
   } finally {
     process.off("SIGINT", onSignal);

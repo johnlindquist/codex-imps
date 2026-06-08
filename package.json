@@ -5,6 +5,7 @@
   "type": "module",
   "bin": {
     "pro-cmux": "./daemons/pro-cmux",
+    "pro-cmux-extensions": "./daemons/pro-cmux-extensions",
     "pro-git": "./daemons/pro-git",
     "pro-docker": "./daemons/pro-docker",
     "pro-npm": "./daemons/pro-npm",
@@ -16,6 +17,8 @@
     "pro-psql": "./daemons/pro-psql",
     "pro-gcloud": "./daemons/pro-gcloud",
     "pro-gh": "./daemons/pro-gh",
+    "pro-zsh": "./daemons/pro-zsh",
+    "pro-gmail": "./daemons/pro-gmail",
     "pro-karabiner": "./daemons/pro-karabiner",
     "pro-packx": "./daemons/pro-packx",
     "pro-memory": "./daemons/pro-memory",

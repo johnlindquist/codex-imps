@@ -79,6 +79,7 @@ Please generate the complete profile file with:
 - **Operating rule is critical**: "Run TOOL via exec_command before any final answer" prevents text-only responses
 - **Keep rules strict**: The agent should refuse to do anything outside the tool's scope
 - **Extra env vars**: If your tool needs specific env vars (API keys, config paths), pass them via `extraEnv`
+- **Self-improvement is runtime-owned**: Do not paste learning logic into `developerInstructions`. To trial local learning for a tested profile, use `selfImprove: { enabled: true }`; the shared runtime owns lesson capture, dedupe, overlay loading, and hot reload.
 
 ## After generating
 

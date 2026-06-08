@@ -3,7 +3,15 @@ import { mkdtempSync, readFileSync, writeFileSync, rmSync, existsSync } from "fs
 import { tmpdir } from "os";
 import { join } from "path";
 import { spawnSync } from "child_process";
-import { scanTranscript, recordLessons, signature } from "../lib/self-improve-stop.ts";
+import {
+  applySelfImproveOverlay,
+  createSelfImproveObserver,
+  recordLessons,
+  redactSecrets,
+  resolveSelfImprove,
+  scanTranscript,
+  signature,
+} from "../lib/self-improve.ts";
 import { applyLessonOverlay, hooksEnabled, prepareIsolatedCodexHome } from "../lib/codex-runtime.ts";
 import type { ProfileConfig } from "../lib/isolated.ts";
 
@@ -66,22 +74,44 @@ test("recordLessons dedupes by signature across calls", () => {
   expect(body.match(/selfimprove:/g)?.length).toBe(1);
 });
 
+test("recordLessons redacts common secrets before rendering", () => {
+  const root = tmp();
+  const lessons = join(root, "p.lessons.md");
+  recordLessons(lessons, [
+    {
+      kind: "nonzero-exit",
+      path: "$.payload.exit_code",
+      exit: 1,
+      command: "curl -H 'Authorization: Bearer sk-abcdefghijklmnopqrstuvwxyz123456'",
+      message: "failed with ghp_abcdefghijklmnopqrstuvwxyz123456",
+    },
+  ]);
+  const body = readFileSync(lessons, "utf8");
+  expect(body).not.toContain("sk-abcdefghijklmnopqrstuvwxyz");
+  expect(body).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz");
+  expect(body).toContain("[REDACTED");
+  expect(redactSecrets("AWS_SECRET_ACCESS_KEY=abcdef")).toContain("[REDACTED]");
+});
+
 // ---- prepareIsolatedCodexHome wiring ---------------------------------------
 
 function cfg(over: Partial<ProfileConfig> = {}): ProfileConfig {
   return { name: "pro-selfimprove", baseInstructions: "base", developerInstructions: "dev", ...over };
 }
 
-test("hooks are off unless selfImprove.enabled is true", () => {
+test("self-improvement is disabled by default and enabled by profile or env", () => {
   expect(hooksEnabled(cfg())).toBe(false);
-  expect(hooksEnabled(cfg({ selfImprove: { enabled: true } }))).toBe(true);
+  expect(hooksEnabled(cfg({ selfImprove: { enabled: true } }))).toBe(false);
+  expect(resolveSelfImprove(cfg()).enabled).toBe(false);
+  expect(resolveSelfImprove(cfg({ selfImprove: { enabled: true } })).enabled).toBe(true);
+  expect(resolveSelfImprove(cfg({ name: "pro-gh" }), { CODEX_DAEMON_SELF_IMPROVE: "pro-gh" }).enabled).toBe(true);
 });
 
-test("prepareIsolatedCodexHome writes config.toml + hooks.json + handler when enabled", () => {
+test("prepareIsolatedCodexHome wires Stop hook only when explicitly enabled", () => {
   const root = tmp();
   const home = join(root, "codex-home");
   const lessons = join(root, "pro-selfimprove.lessons.md");
-  const runtime = prepareIsolatedCodexHome(cfg({ selfImprove: { enabled: true, lessonsPath: lessons } }), home, root);
+  const runtime = prepareIsolatedCodexHome(cfg({ selfImprove: { enabled: true, lessonsPath: lessons, stopHook: true } }), home, root);
 
   expect(runtime.hooksEnabled).toBe(true);
   expect(runtime.extraEnv.CODEX_DAEMON_LESSONS_PATH).toBe(lessons);
@@ -91,7 +121,20 @@ test("prepareIsolatedCodexHome writes config.toml + hooks.json + handler when en
   expect(hooksJson.hooks.Stop[0].hooks[0].type).toBe("command");
   expect(hooksJson.hooks.Stop[0].hooks[0].command).toContain("self-improve-stop.ts");
   expect(existsSync(join(home, "hooks", "self-improve-stop.ts"))).toBe(true);
-  expect(existsSync(lessons)).toBe(true); // seeded empty
+  expect(existsSync(lessons)).toBe(false); // no empty sidecar is seeded
+});
+
+test("prepareIsolatedCodexHome exposes env but no hook config for daemon-side self-improvement", () => {
+  const root = tmp();
+  const home = join(root, "codex-home");
+  const lessons = join(root, "pro-selfimprove.lessons.md");
+  const runtime = prepareIsolatedCodexHome(cfg({ selfImprove: { enabled: true, lessonsPath: lessons } }), home, root);
+
+  expect(runtime.hooksEnabled).toBe(false);
+  expect(runtime.extraEnv.CODEX_DAEMON_LESSONS_PATH).toBe(lessons);
+  expect(existsSync(join(home, "hooks.json"))).toBe(false);
+  expect(existsSync(join(home, "config.toml"))).toBe(false);
+  expect(existsSync(lessons)).toBe(false);
 });
 
 test("prepareIsolatedCodexHome writes no hook config when disabled", () => {
@@ -99,8 +142,19 @@ test("prepareIsolatedCodexHome writes no hook config when disabled", () => {
   const home = join(root, "codex-home");
   const runtime = prepareIsolatedCodexHome(cfg(), home, root);
   expect(runtime.hooksEnabled).toBe(false);
+  expect(runtime.extraEnv).toEqual({});
   expect(existsSync(join(home, "hooks.json"))).toBe(false);
   expect(existsSync(join(home, "config.toml"))).toBe(false);
+});
+
+test("applyLessonOverlay is a no-op when disabled or lessons file is empty", () => {
+  const root = tmp();
+  const lessons = join(root, "p.lessons.md");
+  writeFileSync(lessons, "- ignored while disabled\n");
+  expect(applyLessonOverlay(cfg({ selfImprove: { lessonsPath: lessons } })).developerInstructions).toBe("dev");
+
+  writeFileSync(lessons, "");
+  expect(applySelfImproveOverlay(cfg({ selfImprove: { enabled: true, lessonsPath: lessons } })).developerInstructions).toBe("dev");
 });
 
 test("applyLessonOverlay appends lessons once, idempotently", () => {
@@ -114,6 +168,24 @@ test("applyLessonOverlay appends lessons once, idempotently", () => {
   // Re-applying the already-overlaid config is a no-op (no duplicate heading).
   const twice = applyLessonOverlay(once);
   expect(twice.developerInstructions).toBe(once.developerInstructions);
+});
+
+test("daemon-side observer records app-server and SDK command failures", () => {
+  const root = tmp();
+  const lessons = join(root, "observer.lessons.md");
+  const c = cfg({ selfImprove: { enabled: true, lessonsPath: lessons } });
+  const observer = createSelfImproveObserver(c);
+  observer.onAppServerNotification("item/completed", {
+    item: { type: "commandExecution", command: "bad-appserver", exitCode: 2, aggregatedOutput: "usage: nope" },
+  });
+  observer.onSdkEvent({
+    type: "item.completed",
+    item: { type: "command_execution", command: "bad-sdk", exit_code: 3, aggregated_output: "command not found" },
+  });
+  expect(observer.finish({ status: "completed" })).toBe(2);
+  const body = readFileSync(lessons, "utf8");
+  expect(body).toContain("bad-appserver");
+  expect(body).toContain("bad-sdk");
 });
 
 // ---- end-to-end: run the real handler binary --------------------------------

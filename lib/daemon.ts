@@ -24,6 +24,7 @@ import { createHash } from "crypto";
 import { spawn } from "child_process";
 import type { ProfileConfig } from "./isolated.ts";
 import { AppServerClient } from "./appserver.ts";
+import { selfImproveFingerprintParts } from "./self-improve.ts";
 
 export function socketPath(name: string): string {
   return `/tmp/codex-profile-${name}.sock`;
@@ -42,7 +43,7 @@ export function metaPath(name: string): string {
  * mtime) so edits are caught even when timestamps are preserved (git checkout,
  * tarball extraction, etc.).
  */
-export function sourceFingerprint(): string {
+export function sourceFingerprint(config?: ProfileConfig): string {
   const files: string[] = [];
   let exe: string;
   try {
@@ -51,13 +52,6 @@ export function sourceFingerprint(): string {
     exe = process.argv[1];
   }
   files.push(exe);
-  // Self-improvement overlay: a Stop hook appends "lessons" to `<exe>.lessons.md`.
-  // Hashing it means the next prompt's ensureDaemon() sees the change and restarts
-  // the warm daemon, so freshly-learned guidance takes effect. The file may not
-  // exist yet (first run) — readFileSync below simply skips missing files.
-  files.push(`${exe}.lessons.md`);
-  const envLessons = process.env.CODEX_DAEMON_LESSONS_PATH;
-  if (envLessons && envLessons !== `${exe}.lessons.md`) files.push(envLessons);
   // lib/ sits next to the daemons/ dir: <repo>/daemons/pro-X -> <repo>/lib/*.ts
   const libDir = join(dirname(exe), "..", "lib");
   try {
@@ -65,8 +59,13 @@ export function sourceFingerprint(): string {
       if (f.endsWith(".ts")) files.push(join(libDir, f));
     }
   } catch {}
-  files.sort();
   const hash = createHash("sha256");
+  for (const part of config ? selfImproveFingerprintParts(config) : []) {
+    hash.update(part);
+    hash.update("\0");
+    if (part.startsWith("path:")) files.push(part.slice("path:".length));
+  }
+  files.sort();
   for (const f of files) {
     try {
       hash.update(f);
@@ -174,7 +173,7 @@ export async function runDaemon(config: ProfileConfig): Promise<void> {
     // freshly-launched client can detect when the on-disk source has changed
     // and restart us. Written once the socket is accepting connections.
     try {
-      writeFileSync(metaPath(config.name), JSON.stringify({ pid: process.pid, fp: sourceFingerprint() }));
+      writeFileSync(metaPath(config.name), JSON.stringify({ pid: process.pid, fp: sourceFingerprint(config) }));
     } catch {}
   });
 
@@ -271,7 +270,7 @@ async function stopDaemon(name: string, pid?: number): Promise<void> {
  */
 export async function ensureDaemon(config: ProfileConfig, readyTimeoutMs = 30000): Promise<boolean> {
   const sock = socketPath(config.name);
-  const current = sourceFingerprint();
+  const current = sourceFingerprint(config);
 
   // Already warm and accepting connections?
   if (existsSync(sock) && (await tryConnect(sock, 500))) {

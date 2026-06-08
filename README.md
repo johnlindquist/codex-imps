@@ -37,6 +37,7 @@ bun daemons/pro-gh "list my open PRs"
 | Command | Tool | Description |
 |---------|------|-------------|
 | `pro-cmux` | [cmux](https://github.com/manaflow-ai/cmux) | Terminal workspace automation |
+| `pro-cmux-extensions` | cmux/files | Persistent cmux extension authoring: actions, scripts, receipts, dock controls, and custom sidebars |
 | `pro-git` | [git](https://git-scm.com) | Local Git (status, diff, branches, log, stash, commit, safe sync) |
 | `pro-docker` | [docker](https://docs.docker.com/engine/reference/commandline/cli/) | Containers, images, volumes, networks, Compose (guarded lifecycle) |
 | `pro-npm` | [npm](https://docs.npmjs.com/cli) | Node scripts, deps, package metadata, installs, audits |
@@ -48,6 +49,8 @@ bun daemons/pro-gh "list my open PRs"
 | `pro-psql` | [psql](https://www.postgresql.org/docs/current/app-psql.html) | PostgreSQL schema, indexes, query plans, stats, locks (guarded writes) |
 | `pro-gcloud` | [gcloud](https://cloud.google.com/sdk/gcloud) | Google Cloud project/account/resource inventory (guarded mutations) |
 | `pro-gh` | [gh](https://cli.github.com) | GitHub CLI (issues, PRs, releases, actions) |
+| `pro-zsh` | zsh/files | John's `~/.config/zsh` specialist for aliases, functions, wrappers, startup, and tests |
+| `pro-gmail` | [gog](https://github.com/johnlindquist/gog) | Gmail search/read/draft specialist using the gog CLI with no-send defaults |
 | `pro-karabiner` | [goku](https://github.com/yqrashawn/GokuRakuJoTu) | Karabiner-Elements config (karabiner.edn) |
 | `pro-packx` | [packx](https://www.npmjs.com/package/packx) | AI context bundling |
 | `pro-memory` | [basic-memory](https://github.com/basicmachines-co/basic-memory) | Knowledge management |
@@ -106,7 +109,7 @@ The auto-started daemon is detached and persists after the call returns, so it s
 
 > **Status: experimental.** Added recently alongside the hot-reload work (see commits `Make warm daemon mode the default` → `Add pro-browser-automate + self-improve & hot-reload work`). It is **opt-in per profile and off everywhere else** — no existing `pro-*` daemon changes behavior. Treat it as a research toy: a daemon that rewrites its own prompt is inherently unpredictable, so don't point it at anything you can't afford to have it nudge over time. See the caveats below before relying on it.
 
-`pro-selfimprove` is a daemon that **learns from its own mistakes**. Opt in with `selfImprove: { enabled: true }` on a profile (see `daemons/pro-selfimprove`). When a turn ends, the daemon scans that turn for failed tool calls (non-zero command exits) and appends a concise **lesson** to a `daemons/<name>.lessons.md` overlay file. On startup each profile folds that overlay into its `developerInstructions`, and the lessons file is part of the hot-reload fingerprint — so the **next prompt restarts the daemon with the new lesson baked into its own prompt**. Over time it accumulates operating guidance shaped by what actually went wrong.
+The shared runtime includes self-improvement support for every daemon, but it is **opt-in per profile**. `pro-selfimprove` is the test profile that has it enabled. Opt in with `selfImprove: { enabled: true }` on a profile, or temporarily for local trials with `CODEX_DAEMON_SELF_IMPROVE=pro-name`. When a turn ends, the runtime can scan failed command executions (non-zero exits) and append a concise **lesson** to a `daemons/<name>.lessons.md` overlay file. On startup that profile folds the overlay into its `developerInstructions`, and the active lessons file is part of the hot-reload fingerprint — so the **next prompt restarts the daemon with the new lesson baked into its own prompt**. Over time it accumulates operating guidance shaped by what actually went wrong.
 
 ```bash
 pro-selfimprove "run a command that doesn't exist"   # turn 1: fails, records a lesson
@@ -114,14 +117,14 @@ cat daemons/pro-selfimprove.lessons.md               # see what it learned
 pro-selfimprove "what have you learned so far?"        # turn 2: daemon restarted, lesson now in its instructions
 ```
 
-How it knows itself: each run injects `CODEX_DAEMON_SELF_PATH`, `CODEX_DAEMON_LIB_DIR`, and `CODEX_DAEMON_LESSONS_PATH` into the agent's environment, so it can reason about (and extend) its own source. Lessons are deduped by a content signature and the writer fails open — a broken self-improvement step never breaks your turn.
+How it knows itself: enabled self-improving profiles receive `CODEX_DAEMON_SELF_PATH`, `CODEX_DAEMON_LIB_DIR`, and `CODEX_DAEMON_LESSONS_PATH` in the spawned Codex environment. Disabled profiles receive none of that self-improvement env. Lessons are deduped by a content signature, common secrets are redacted before rendering, and the writer fails open — a broken self-improvement step never breaks your turn.
 
 **Why it's experimental (and the sharp edges):**
 
 - **It edits its own prompt.** Each failed turn changes what the daemon will be told next time. Behavior drifts as lessons accumulate, and a bad lesson can make it *worse*. There's no automatic rollback-on-regression yet — if it goes sideways, reset it: `rm daemons/pro-selfimprove.lessons.md`.
-- **Lessons grow unbounded.** No aging or cap on the overlay today; left running it will keep appending. Prune the file periodically.
+- **Lessons can grow.** The runtime caps how many overlay bytes are loaded into the prompt, but the local lessons file can still accumulate over time. Prune the file periodically.
 - **Failure detection is a blunt heuristic** — it flags non-zero command exits (and `error`/`failed` markers), not genuine "mistakes." A command that's *supposed* to exit non-zero (a probe, a grep with no match) can still generate a lesson.
-- **It works via a daemon-side trigger, not Codex's hooks.** The intended design was a Codex `Stop` lifecycle hook, but the shipped Codex CLI (verified on 0.134/0.135) does **not** execute user-config hooks for non-interactive `exec`/`app-server` turns. So detection runs daemon-side off the turn stream instead; the `Stop`-hook wiring is kept only as forward-compat for builds that do run user hooks. This is the main reason it's labeled experimental rather than stable.
+- **It works via a shared daemon-side trigger, not Codex's hooks.** The intended design was a Codex `Stop` lifecycle hook, but the shipped Codex CLI (verified on 0.134/0.135) does **not** execute user-config hooks for non-interactive `exec`/`app-server` turns. So detection runs daemon-side off the turn stream instead; optional `stopHook: true` wiring is kept only as forward-compat for builds that do run user hooks. This is the main reason it's labeled experimental rather than stable.
 - **Lessons files are git-ignored** (`daemons/*.lessons.md`) — a daemon's learned state is local to your machine, not shared or versioned.
 
 To try it safely, run it in a throwaway repo, watch `daemons/pro-selfimprove.lessons.md`, and delete that file whenever you want a clean slate.
