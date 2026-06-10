@@ -4,9 +4,9 @@ import { readdirSync, rmSync } from "fs";
 import { join } from "path";
 
 const ROOT = join(import.meta.dir, "..");
-// Profile executables are extensionless `pro-*` files; skip sidecars like
-// `pro-selfimprove.lessons.md` / `.debug.jsonl` that a self-improving daemon writes.
-const PROFILES = readdirSync(join(ROOT, "daemons")).filter((f) => /^pro-[a-z0-9-]+$/.test(f));
+// Profile executables are extensionless `imp-*` files; skip sidecars like
+// `imp-selfimprove.lessons.md` / `.debug.jsonl` that a self-improving imp writes.
+const PROFILES = readdirSync(join(ROOT, "imps")).filter((f) => /^imp-[a-z0-9-]+$/.test(f));
 
 function run(args: string[], opts: { killAfterMs?: number } = {}): Promise<{ code: number | null; out: string; killed: boolean }> {
   return new Promise((resolve) => {
@@ -25,14 +25,14 @@ function run(args: string[], opts: { killAfterMs?: number } = {}): Promise<{ cod
 
 test("every profile binary loads and prints usage on --help", async () => {
   for (const p of PROFILES) {
-    const { code, out } = await run([`daemons/${p}`, "--help"]);
+    const { code, out } = await run([`imps/${p}`, "--help"]);
     expect(code, `${p} --help exit code`).toBe(0);
     expect(out, `${p} --help output`).toContain("Usage:");
   }
 }, 30000);
 
 test("no-args prints usage and exits 0 (not an error)", async () => {
-  const { code, out } = await run(["daemons/pro-minimal"]);
+  const { code, out } = await run(["imps/imp-minimal"]);
   expect(code).toBe(0);
   expect(out).toContain("Usage:");
 });
@@ -41,7 +41,7 @@ test("a real prompt survives parsing at the binary level (regression guard)", as
   // If arg parsing drops the prompt, the bin exits 1 immediately with this message
   // BEFORE any model call. We force --no-warm + kill quickly so we never pay a turn.
   const { out, killed, code } = await run(
-    ["daemons/pro-minimal", "--no-warm", "summarize the history"],
+    ["imps/imp-minimal", "--no-warm", "summarize the history"],
     { killAfterMs: 1500 },
   );
   expect(out).not.toContain("no prompt provided");
@@ -51,7 +51,7 @@ test("a real prompt survives parsing at the binary level (regression guard)", as
 
 afterAll(() => {
   // Clean any isolated homes the smoke run created.
-  for (const dir of readdirSync("/tmp").filter((d) => d.startsWith("codex-profile-") || d.startsWith("codex-appserver-"))) {
+  for (const dir of readdirSync("/tmp").filter((d) => d.startsWith("codex-imp-") || d.startsWith("codex-appserver-"))) {
     try { rmSync(join("/tmp", dir), { recursive: true, force: true }); } catch {}
   }
 });

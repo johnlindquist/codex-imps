@@ -4,6 +4,6 @@ bun.lock
 .DS_Store
 tmp/
 
-# Self-improving daemon runtime artifacts (written next to the profile executable)
-daemons/*.lessons.md
-daemons/*.debug.jsonl
+# Self-improving imp runtime artifacts (written next to the imp executable)
+imps/*.lessons.md
+imps/*.debug.jsonl

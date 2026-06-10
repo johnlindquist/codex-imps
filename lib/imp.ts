@@ -1,16 +1,16 @@
 /**
- * Warm daemon: holds ONE persistent `codex app-server` process alive (via
+ * Warm imp: holds ONE persistent `codex app-server` process alive (via
  * AppServerClient) so each invocation skips process spawn + auth/config load +
  * WebSocket connect/prewarm. Measured: ~2s for a short answer vs ~5.4s cold,
  * with the first protocol frame back in ~1ms.
  *
  * Protocol: newline-delimited JSON over a Unix socket at
- *   /tmp/codex-profile-{name}.sock
+ *   /tmp/codex-imp-{name}.sock
  *
- * Client -> Daemon (one line):
+ * Client -> Imp (one line):
  *   { "prompt": "...", "quiet": false, "cwd": "/abs/path", "effort": "low" }
  *
- * Daemon -> Client (many lines, then close):
+ * Imp -> Client (many lines, then close):
  *   { "type": "notif", "method": "...", "params": {...} }   (streaming, non-quiet)
  *   { "type": "final", "text": "..." }                      (always, on completion)
  *   { "type": "error", "message": "..." }
@@ -22,28 +22,28 @@ import { existsSync, unlinkSync, readFileSync, readdirSync, writeFileSync, realp
 import { join, dirname } from "path";
 import { createHash } from "crypto";
 import { spawn } from "child_process";
-import type { ProfileConfig } from "./isolated.ts";
+import type { ImpConfig } from "./isolated.ts";
 import { AppServerClient } from "./appserver.ts";
 import { selfImproveFingerprintParts } from "./self-improve.ts";
 
 export function socketPath(name: string): string {
-  return `/tmp/codex-profile-${name}.sock`;
+  return `/tmp/codex-imp-${name}.sock`;
 }
 
-/** Sidecar file recording the running daemon's pid + source fingerprint. */
+/** Sidecar file recording the running imp's pid + source fingerprint. */
 export function metaPath(name: string): string {
-  return `/tmp/codex-profile-${name}.meta.json`;
+  return `/tmp/codex-imp-${name}.meta.json`;
 }
 
 /**
- * Fingerprint the daemon's own source: the executable that defines the profile
+ * Fingerprint the imp's own source: the executable that defines the profile
  * (its instructions, model, env) plus every lib/*.ts module it loads at startup.
- * A change to any of these means a long-lived warm daemon is now running stale
+ * A change to any of these means a long-lived warm imp is now running stale
  * code, so the next prompt must restart it. We hash file *contents* (not just
  * mtime) so edits are caught even when timestamps are preserved (git checkout,
  * tarball extraction, etc.).
  */
-export function sourceFingerprint(config?: ProfileConfig): string {
+export function sourceFingerprint(config?: ImpConfig): string {
   const files: string[] = [];
   let exe: string;
   try {
@@ -52,7 +52,7 @@ export function sourceFingerprint(config?: ProfileConfig): string {
     exe = process.argv[1];
   }
   files.push(exe);
-  // lib/ sits next to the daemons/ dir: <repo>/daemons/pro-X -> <repo>/lib/*.ts
+  // lib/ sits next to the imps/ dir: <repo>/imps/imp-X -> <repo>/lib/*.ts
   const libDir = join(dirname(exe), "..", "lib");
   try {
     for (const f of readdirSync(libDir)) {
@@ -85,7 +85,7 @@ function readMeta(name: string): { pid?: number; fp?: string } | null {
   }
 }
 
-export async function runDaemon(config: ProfileConfig): Promise<void> {
+export async function serveImp(config: ImpConfig): Promise<void> {
   const sock = socketPath(config.name);
   if (existsSync(sock)) {
     // Probe — if no one's listening, remove stale socket
@@ -97,14 +97,14 @@ export async function runDaemon(config: ProfileConfig): Promise<void> {
       });
       unlinkSync(sock);
     } catch {
-      console.error(`${config.name} daemon already running at ${sock}`);
+      console.error(`${config.name} warm imp already running at ${sock}`);
       process.exit(1);
     }
   }
 
   const client = new AppServerClient(config);
   await client.start();
-  console.error(`${config.name} daemon ready at ${sock} (pid ${process.pid}, app-server warm)`);
+  console.error(`${config.name} warm imp ready at ${sock} (pid ${process.pid}, app-server warm)`);
 
   // Requests are serialized: one warm app-server, one turn at a time.
   let chain: Promise<void> = Promise.resolve();
@@ -129,7 +129,7 @@ export async function runDaemon(config: ProfileConfig): Promise<void> {
 
       const send = (obj: unknown) => socket.write(JSON.stringify(obj) + "\n");
 
-      // Control message: graceful stop (used to restart a stale daemon when we
+      // Control message: graceful stop (used to restart a stale imp when we
       // don't have its pid). Ack, flush, then shut down.
       if (req.ctl === "stop") {
         send({ type: "done" });
@@ -169,7 +169,7 @@ export async function runDaemon(config: ProfileConfig): Promise<void> {
   });
 
   server.listen(sock, () => {
-    // Record pid + the source fingerprint this daemon was started with, so a
+    // Record pid + the source fingerprint this imp was started with, so a
     // freshly-launched client can detect when the on-disk source has changed
     // and restart us. Written once the socket is accepting connections.
     try {
@@ -200,7 +200,7 @@ export function clientAvailable(name: string): boolean {
   return existsSync(socketPath(name));
 }
 
-/** Try to open the daemon socket; resolves true only if a live listener accepts. */
+/** Try to open the imp socket; resolves true only if a live listener accepts. */
 function tryConnect(sock: string, timeoutMs: number): Promise<boolean> {
   return new Promise((resolve) => {
     const socket = createConnection(sock);
@@ -211,7 +211,7 @@ function tryConnect(sock: string, timeoutMs: number): Promise<boolean> {
   });
 }
 
-/** Ask a running daemon to stop via its socket (no pid needed). Resolves once closed. */
+/** Ask a running imp to stop via its socket (no pid needed). Resolves once closed. */
 function sendStop(sock: string): Promise<void> {
   return new Promise((resolve) => {
     const s = createConnection(sock);
@@ -225,13 +225,13 @@ function sendStop(sock: string): Promise<void> {
 }
 
 /**
- * Stop a running daemon and wait until its socket stops accepting connections.
- * Prefers a pid-targeted SIGTERM (works regardless of daemon busyness); falls
- * back to a socket control message when the pid is unknown (e.g. a daemon
+ * Stop a running imp and wait until its socket stops accepting connections.
+ * Prefers a pid-targeted SIGTERM (works regardless of imp busyness); falls
+ * back to a socket control message when the pid is unknown (e.g. an imp
  * started by an older build with no meta file). Escalates to SIGKILL if needed,
- * then clears any stale socket/meta so a fresh daemon can start clean.
+ * then clears any stale socket/meta so a fresh imp can start clean.
  */
-async function stopDaemon(name: string, pid?: number): Promise<void> {
+async function stopWarmImp(name: string, pid?: number): Promise<void> {
   const sock = socketPath(name);
   if (pid) {
     try { process.kill(pid, "SIGTERM"); } catch {}
@@ -256,36 +256,36 @@ async function stopDaemon(name: string, pid?: number): Promise<void> {
 }
 
 /**
- * Ensure a warm daemon is running and reachable for this profile, auto-starting
+ * Ensure a warm imp is running and reachable for this profile, auto-starting
  * one in the background if needed. This makes warm mode the DEFAULT: the first
  * call pays the startup cost once, then every later call routes through the
- * persistent app-server for instant responses. Returns true if a live daemon is
+ * persistent app-server for instant responses. Returns true if a live imp is
  * reachable, false if startup failed (caller should fall back to a cold run).
  *
  * Hot reload: this runs in a freshly-launched client process, so it always sees
- * the current on-disk source. If a warm daemon is running stale code (its
+ * the current on-disk source. If a warm imp is running stale code (its
  * recorded fingerprint no longer matches the source on disk), we stop it and
- * spawn a fresh one — so editing a daemon's instructions/model, or any lib/*.ts,
+ * spawn a fresh one — so editing an imp's instructions/model, or any lib/*.ts,
  * takes effect on the very next prompt.
  */
-export async function ensureDaemon(config: ProfileConfig, readyTimeoutMs = 30000): Promise<boolean> {
+export async function ensureWarmImp(config: ImpConfig, readyTimeoutMs = 30000): Promise<boolean> {
   const sock = socketPath(config.name);
   const current = sourceFingerprint(config);
 
   // Already warm and accepting connections?
   if (existsSync(sock) && (await tryConnect(sock, 500))) {
     const meta = readMeta(config.name);
-    if (meta && meta.fp === current) return true; // up-to-date warm daemon — reuse it
-    // Source changed since this daemon started (or it predates fingerprinting).
+    if (meta && meta.fp === current) return true; // up-to-date warm imp — reuse it
+    // Source changed since this imp started (or it predates fingerprinting).
     // Restart so the next prompt runs the edited code.
-    await stopDaemon(config.name, meta?.pid);
-    // fall through to spawn a fresh daemon
+    await stopWarmImp(config.name, meta?.pid);
+    // fall through to spawn a fresh imp
   }
 
-  // Spawn a detached background daemon: re-run THIS executable with --daemon.
+  // Spawn a detached background imp: re-run THIS executable with --serve.
   // It cleans up any stale socket on start, then listens once the app-server is warm.
   try {
-    const child = spawn(process.argv[0], [process.argv[1], "--daemon"], {
+    const child = spawn(process.argv[0], [process.argv[1], "--serve"], {
       detached: true,
       stdio: "ignore",
     });
@@ -294,7 +294,7 @@ export async function ensureDaemon(config: ProfileConfig, readyTimeoutMs = 30000
     return false;
   }
 
-  // Poll until the daemon accepts connections (= app-server warm) or we give up.
+  // Poll until the imp accepts connections (= app-server warm) or we give up.
   const deadline = Date.now() + readyTimeoutMs;
   while (Date.now() < deadline) {
     if (await tryConnect(sock, 500)) return true;
@@ -303,7 +303,7 @@ export async function ensureDaemon(config: ProfileConfig, readyTimeoutMs = 30000
   return false;
 }
 
-export async function runViaDaemon(
+export async function runViaWarmImp(
   name: string,
   req: { prompt: string; quiet: boolean; cwd: string; effort?: string },
   handlers: ClientEventHandlers,

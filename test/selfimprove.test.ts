@@ -5,7 +5,10 @@ import { join } from "path";
 import { spawnSync } from "child_process";
 import {
   applySelfImproveOverlay,
+  capAtLessonBoundary,
+  classifyFailure,
   createSelfImproveObserver,
+  isExpectedNonzero,
   recordLessons,
   redactSecrets,
   resolveSelfImprove,
@@ -13,7 +16,7 @@ import {
   signature,
 } from "../lib/self-improve.ts";
 import { applyLessonOverlay, hooksEnabled, prepareIsolatedCodexHome } from "../lib/codex-runtime.ts";
-import type { ProfileConfig } from "../lib/isolated.ts";
+import type { ImpConfig } from "../lib/isolated.ts";
 
 const HANDLER = join(import.meta.dir, "..", "lib", "self-improve-stop.ts");
 const roots: string[] = [];
@@ -62,6 +65,56 @@ test("a clean transcript yields no failures and writes nothing", () => {
   expect(existsSync(lessons)).toBe(false);
 });
 
+test("classifyFailure maps failures to actionable categories", () => {
+  expect(classifyFailure({ kind: "nonzero-exit", path: "$", exit: 127, message: "zsh: command not found: nope" })).toBe("command-not-found");
+  expect(classifyFailure({ kind: "nonzero-exit", path: "$", exit: 2, message: "error: unknown flag --frop\nusage: tool ..." })).toBe("usage-error");
+  expect(classifyFailure({ kind: "nonzero-exit", path: "$", exit: 1, message: "cat: /tmp/nope: No such file or directory" })).toBe("missing-path");
+  expect(classifyFailure({ kind: "nonzero-exit", path: "$", exit: 126, message: "permission denied" })).toBe("permission-denied");
+  expect(classifyFailure({ kind: "nonzero-exit", path: "$", exit: 124, message: "command timed out" })).toBe("timeout");
+  expect(classifyFailure({ kind: "error-field", path: "$", message: "connect ECONNREFUSED 127.0.0.1:5432" })).toBe("connection-error");
+  expect(classifyFailure({ kind: "failed-status", path: "$", status: "failed" })).toBe("generic");
+});
+
+test("lessons include the category and category-specific advice", () => {
+  const root = tmp();
+  const lessons = join(root, "p.lessons.md");
+  recordLessons(lessons, [
+    { kind: "nonzero-exit", path: "$", exit: 2, command: "cmux frop", message: "Unknown command: frop" },
+  ]);
+  const body = readFileSync(lessons, "utf8");
+  expect(body).toContain("[usage-error]");
+  expect(body).toContain("cmux frop");
+  expect(body).toContain("--help");
+});
+
+test("expected nonzero exits from query commands are not recorded", () => {
+  expect(isExpectedNonzero({ kind: "nonzero-exit", path: "$", exit: 1, command: "rg TODO src/" })).toBe(true);
+  expect(isExpectedNonzero({ kind: "nonzero-exit", path: "$", exit: 1, command: "/bin/zsh -lc 'grep -q foo file.txt'" })).toBe(true);
+  expect(isExpectedNonzero({ kind: "nonzero-exit", path: "$", exit: 1, command: "test -f /tmp/x" })).toBe(true);
+  expect(isExpectedNonzero({ kind: "nonzero-exit", path: "$", exit: 2, command: "rg --frop" })).toBe(false);
+  expect(isExpectedNonzero({ kind: "nonzero-exit", path: "$", exit: 1, command: "npm test" })).toBe(false);
+
+  const root = tmp();
+  const lessons = join(root, "noise.lessons.md");
+  expect(recordLessons(lessons, [{ kind: "nonzero-exit", path: "$", exit: 1, command: "rg TODO" }])).toBe(0);
+  expect(existsSync(lessons)).toBe(false);
+});
+
+test("signature ignores volatile later lines of output", () => {
+  const a = { kind: "nonzero-exit" as const, path: "$", exit: 2, command: "tool x", message: "usage: tool\nat 2026-01-01T00:00:00Z pid 123" };
+  const b = { kind: "nonzero-exit" as const, path: "$", exit: 2, command: "tool x", message: "usage: tool\nat 2026-06-10T09:30:00Z pid 999" };
+  expect(signature(a)).toBe(signature(b));
+});
+
+test("capAtLessonBoundary cuts at a lesson marker, not mid-lesson", () => {
+  const lesson = (n: number) => `<!-- selfimprove:${String(n).padStart(16, "0")} -->\n- [generic] lesson ${n} ${"x".repeat(80)}\n`;
+  const body = [1, 2, 3, 4].map(lesson).join("\n");
+  const capped = capAtLessonBoundary(body, 250);
+  expect(capped.length).toBeLessThanOrEqual(250);
+  expect(capped.startsWith("<!-- selfimprove:")).toBe(true);
+  expect(capAtLessonBoundary(body, body.length + 10)).toBe(body);
+});
+
 test("recordLessons dedupes by signature across calls", () => {
   const root = tmp();
   const lessons = join(root, "p.lessons.md");
@@ -95,8 +148,8 @@ test("recordLessons redacts common secrets before rendering", () => {
 
 // ---- prepareIsolatedCodexHome wiring ---------------------------------------
 
-function cfg(over: Partial<ProfileConfig> = {}): ProfileConfig {
-  return { name: "pro-selfimprove", baseInstructions: "base", developerInstructions: "dev", ...over };
+function cfg(over: Partial<ImpConfig> = {}): ImpConfig {
+  return { name: "imp-selfimprove", baseInstructions: "base", developerInstructions: "dev", ...over };
 }
 
 test("self-improvement is enabled by default and can be explicitly disabled", () => {
@@ -105,18 +158,18 @@ test("self-improvement is enabled by default and can be explicitly disabled", ()
   expect(resolveSelfImprove(cfg()).enabled).toBe(true);
   expect(resolveSelfImprove(cfg({ selfImprove: { enabled: false } })).enabled).toBe(false);
   expect(resolveSelfImprove(cfg({ selfImprove: { enabled: true } })).enabled).toBe(true);
-  expect(resolveSelfImprove(cfg({ name: "pro-gh" }), { CODEX_DAEMON_SELF_IMPROVE: "pro-gh" }).enabled).toBe(true);
+  expect(resolveSelfImprove(cfg({ name: "imp-gh" }), { CODEX_IMP_SELF_IMPROVE: "imp-gh" }).enabled).toBe(true);
 });
 
 test("prepareIsolatedCodexHome wires Stop hook only when explicitly enabled", () => {
   const root = tmp();
   const home = join(root, "codex-home");
-  const lessons = join(root, "pro-selfimprove.lessons.md");
+  const lessons = join(root, "imp-selfimprove.lessons.md");
   const runtime = prepareIsolatedCodexHome(cfg({ selfImprove: { enabled: true, lessonsPath: lessons, stopHook: true } }), home, root);
 
   expect(runtime.hooksEnabled).toBe(true);
-  expect(runtime.extraEnv.CODEX_DAEMON_LESSONS_PATH).toBe(lessons);
-  expect(runtime.extraEnv.CODEX_DAEMON_NAME).toBe("pro-selfimprove");
+  expect(runtime.extraEnv.CODEX_IMP_LESSONS_PATH).toBe(lessons);
+  expect(runtime.extraEnv.CODEX_IMP_NAME).toBe("imp-selfimprove");
   expect(readFileSync(join(home, "config.toml"), "utf8")).toContain("bypass_hook_trust = true");
   const hooksJson = JSON.parse(readFileSync(join(home, "hooks.json"), "utf8"));
   expect(hooksJson.hooks.Stop[0].hooks[0].type).toBe("command");
@@ -125,14 +178,14 @@ test("prepareIsolatedCodexHome wires Stop hook only when explicitly enabled", ()
   expect(existsSync(lessons)).toBe(false); // no empty sidecar is seeded
 });
 
-test("prepareIsolatedCodexHome exposes env but no hook config for daemon-side self-improvement", () => {
+test("prepareIsolatedCodexHome exposes env but no hook config for imp-side self-improvement", () => {
   const root = tmp();
   const home = join(root, "codex-home");
-  const lessons = join(root, "pro-selfimprove.lessons.md");
+  const lessons = join(root, "imp-selfimprove.lessons.md");
   const runtime = prepareIsolatedCodexHome(cfg({ selfImprove: { enabled: true, lessonsPath: lessons } }), home, root);
 
   expect(runtime.hooksEnabled).toBe(false);
-  expect(runtime.extraEnv.CODEX_DAEMON_LESSONS_PATH).toBe(lessons);
+  expect(runtime.extraEnv.CODEX_IMP_LESSONS_PATH).toBe(lessons);
   expect(existsSync(join(home, "hooks.json"))).toBe(false);
   expect(existsSync(join(home, "config.toml"))).toBe(false);
   expect(existsSync(lessons)).toBe(false);
@@ -171,7 +224,7 @@ test("applyLessonOverlay appends lessons once, idempotently", () => {
   expect(twice.developerInstructions).toBe(once.developerInstructions);
 });
 
-test("daemon-side observer records app-server and SDK command failures", () => {
+test("imp-side observer records app-server and SDK command failures", () => {
   const root = tmp();
   const lessons = join(root, "observer.lessons.md");
   const c = cfg({ selfImprove: { enabled: true, lessonsPath: lessons } });
@@ -201,7 +254,7 @@ function runHandler(input: object, env: Record<string, string>) {
 
 test("handler appends a lesson for a synthetic failed Stop transcript", () => {
   const root = tmp();
-  const lessons = join(root, "pro-selfimprove.lessons.md");
+  const lessons = join(root, "imp-selfimprove.lessons.md");
   const transcript = join(root, "rollout.jsonl");
   writeFileSync(
     transcript,
@@ -222,13 +275,13 @@ test("handler appends a lesson for a synthetic failed Stop transcript", () => {
       permission_mode: "bypassPermissions",
       last_assistant_message: "done",
     },
-    { CODEX_DAEMON_LESSONS_PATH: lessons },
+    { CODEX_IMP_LESSONS_PATH: lessons },
   );
   expect(res.status).toBe(0);
   expect(res.stdout).toContain('"continue":true');
   const body = readFileSync(lessons, "utf8");
-  expect(body).toContain("failed tool/command");
-  expect(body).toContain("Exit: 127");
+  expect(body).toContain("[command-not-found]");
+  expect(body).toContain("exited 127");
 });
 
 test("handler is a no-op when stop_hook_active (recursion guard)", () => {
@@ -238,7 +291,7 @@ test("handler is a no-op when stop_hook_active (recursion guard)", () => {
   writeFileSync(transcript, JSON.stringify({ payload: { command: "x", exit_code: 1 } }) + "\n");
   const res = runHandler(
     { hook_event_name: "Stop", transcript_path: transcript, stop_hook_active: true },
-    { CODEX_DAEMON_LESSONS_PATH: lessons },
+    { CODEX_IMP_LESSONS_PATH: lessons },
   );
   expect(res.status).toBe(0);
   expect(res.stdout).toContain('"continue":true');
@@ -250,7 +303,7 @@ test("handler ignores non-Stop events", () => {
   const lessons = join(root, "l.lessons.md");
   const res = runHandler(
     { hook_event_name: "SessionStart", source: "startup" },
-    { CODEX_DAEMON_LESSONS_PATH: lessons },
+    { CODEX_IMP_LESSONS_PATH: lessons },
   );
   expect(res.status).toBe(0);
   expect(res.stdout).toContain('"continue":true');

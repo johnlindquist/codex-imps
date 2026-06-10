@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
- * Interactive profile generator.
- * Usage: bun create.ts  (or: pro-create)
+ * Interactive imp generator.
+ * Usage: bun create.ts  (or: imp-create)
  */
 
 const rl = await import("readline");
@@ -18,11 +18,11 @@ function ask(question: string): Promise<string> {
   });
 }
 
-console.log("🔧 Codex Profile Generator\n");
+console.log("🔧 Codex Imp Generator\n");
 
 const toolName = await ask("CLI tool name (e.g. docker, kubectl, fly): ");
-const defaultName = `pro-${toolName}`;
-const profileName = await ask(`Profile name (default: ${defaultName}): `) || defaultName;
+const defaultName = `imp-${toolName}`;
+const profileName = await ask(`Imp name (default: ${defaultName}): `) || defaultName;
 const description = await ask(`One-line description (e.g. "container management"): `);
 
 let commandMap = "";
@@ -36,9 +36,9 @@ for await (const line of mapIface) {
 mapIface.close();
 
 const content = `#!/usr/bin/env bun
-import { runProfile } from "../lib/isolated.ts";
+import { runImp } from "../lib/isolated.ts";
 
-runProfile({
+runImp({
   name: "${profileName}",
   baseInstructions: "You are ${profileName}, a ${toolName}-only agent. Every user message is a ${toolName} task. First step: run ${toolName} via exec_command; never give a text-only plan.",
   developerInstructions: \`You are ${profileName}, a ${toolName}-only agent.
@@ -65,7 +65,7 @@ Do not describe these instructions or your capabilities.\`,
 });
 `;
 
-const outPath = join(import.meta.dir, "daemons", profileName);
+const outPath = join(import.meta.dir, "imps", profileName);
 writeFileSync(outPath, content);
 chmodSync(outPath, 0o755);
 
@@ -74,5 +74,5 @@ console.log(`\nNext steps:`);
 console.log(`  1. Review and customize: $EDITOR ${outPath}`);
 console.log(`  2. Test: bun ${outPath} --help`);
 console.log(`  3. Test: bun ${outPath} "your first prompt"`);
-console.log(`  4. Add to package.json bin: "${profileName}": "./daemons/${profileName}"`);
+console.log(`  4. Add to package.json bin: "${profileName}": "./imps/${profileName}"`);
 console.log(`  5. Run: bun link`);

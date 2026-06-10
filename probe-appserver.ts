@@ -11,7 +11,7 @@
  * "First token" = first of these notifications after turnStart:
  *   item/started, item/reasoning/textDelta, item/reasoning/summaryTextDelta, item/agentMessage/delta
  *
- * Compare against the cold baseline: `bun bench.ts pro-gh "say hi" --runs 8`.
+ * Compare against the cold baseline: `bun bench.ts imp-gh "say hi" --runs 8`.
  */
 
 import { spawn } from "child_process";
@@ -47,8 +47,8 @@ const isolationConfig: Record<string, unknown> = {
 };
 
 const BASE_INSTRUCTIONS =
-  "You are pro-gh, a gh-only agent. Every user message is a gh task. First step: run gh via exec_command; never give a text-only plan.";
-const DEV_INSTRUCTIONS = "You are pro-gh, a gh-only agent.\n\n## Operating rule\nRun gh via exec_command before any final answer.";
+  "You are imp-gh, a gh-only agent. Every user message is a gh task. First step: run gh via exec_command; never give a text-only plan.";
+const DEV_INSTRUCTIONS = "You are imp-gh, a gh-only agent.\n\n## Operating rule\nRun gh via exec_command before any final answer.";
 
 const child = spawn("codex", ["app-server"], {
   env: {

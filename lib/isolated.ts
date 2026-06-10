@@ -8,7 +8,7 @@
 import { Codex, type CodexOptions, type ThreadOptions } from "@openai/codex-sdk";
 import { rmSync } from "fs";
 import { spawn } from "child_process";
-import { ensureDaemon, runViaDaemon, runDaemon } from "./daemon.ts";
+import { ensureWarmImp, runViaWarmImp, serveImp } from "./imp.ts";
 import {
   applyLessonOverlay,
   prepareIsolatedCodexHome,
@@ -16,7 +16,7 @@ import {
 } from "./codex-runtime.ts";
 import { createSelfImproveObserver } from "./self-improve.ts";
 
-export interface ProfileConfig {
+export interface ImpConfig {
   name: string;
   model?: string;
   reasoningEffort?: string;
@@ -28,14 +28,14 @@ export interface ProfileConfig {
   selfImprove?: SelfImproveConfig;
 }
 
-export function createIsolatedCodex(rawConfig: ProfileConfig) {
+export function createIsolatedCodex(rawConfig: ImpConfig) {
   const config = applyLessonOverlay(rawConfig);
   const realHome = process.env.HOME!;
-  const isolatedHome = `/tmp/codex-profile-${config.name}-${process.pid}`;
+  const isolatedHome = `/tmp/codex-imp-${config.name}-${process.pid}`;
   // Symlinks auth, and (when self-improvement is enabled) writes the hook config.
   const runtime = prepareIsolatedCodexHome(config, isolatedHome, realHome);
 
-  const model = config.model || process.env.CODEX_PROFILE_MODEL || "gpt-5.3-codex-spark";
+  const model = config.model || process.env.CODEX_IMP_MODEL || process.env.CODEX_PROFILE_MODEL || "gpt-5.3-codex-spark";
 
   const codex = new Codex({
     env: {
@@ -95,8 +95,8 @@ export function createIsolatedCodex(rawConfig: ProfileConfig) {
   return { codex, startThread, cleanup, model, isolatedHome };
 }
 
-function buildInteractiveFlags(config: ProfileConfig, hooksOn = false): string[] {
-  const model = config.model || process.env.CODEX_PROFILE_MODEL || "gpt-5.3-codex-spark";
+function buildInteractiveFlags(config: ImpConfig, hooksOn = false): string[] {
+  const model = config.model || process.env.CODEX_IMP_MODEL || process.env.CODEX_PROFILE_MODEL || "gpt-5.3-codex-spark";
   return [
     "--dangerously-bypass-approvals-and-sandbox",
     "--disable", "plugins",
@@ -131,22 +131,23 @@ export function parseArgs(argv: string[]) {
   const interactive = args.includes("-i") || args.includes("--interactive");
   const quiet = args.includes("-q") || args.includes("--quiet");
   const help = args.includes("--help") || args.includes("-h");
-  const daemon = args.includes("--daemon");
+  // --daemon is a back-compat alias from before the imp rename.
+  const serve = args.includes("--serve") || args.includes("--daemon");
   const noWarm = args.includes("--no-warm");
-  // --effort <none|minimal|low|medium|high|xhigh>: per-turn reasoning override (warm daemon path)
+  // --effort <none|minimal|low|medium|high|xhigh>: per-turn reasoning override (warm imp path)
   const effortIdx = args.findIndex((a) => a === "--effort");
   const effort = effortIdx !== -1 ? args[effortIdx + 1] : undefined;
-  const flags = ["-q", "--quiet", "-i", "--interactive", "--help", "-h", "--daemon", "--no-warm"];
+  const flags = ["-q", "--quiet", "-i", "--interactive", "--help", "-h", "--serve", "--daemon", "--no-warm"];
   // Drop the value following --effort only when --effort is actually present
   // (effortIdx === -1 would otherwise make effortIdx+1 === 0 and strip the first prompt word).
   const effortValueIdx = effortIdx !== -1 ? effortIdx + 1 : -1;
   const prompt = args
     .filter((a, i) => !flags.includes(a) && a !== "--effort" && i !== effortValueIdx)
     .join(" ");
-  return { interactive, quiet, help, daemon, noWarm, effort, prompt, noArgs: args.length === 0 };
+  return { interactive, quiet, help, serve, noWarm, effort, prompt, noArgs: args.length === 0 };
 }
 
-// Renders streaming app-server JSON-RPC notifications (warm daemon path).
+// Renders streaming app-server JSON-RPC notifications (warm imp path).
 // Answer tokens stream to stdout; reasoning/commands/output go to stderr.
 function renderAppServerNotif(method: string, params: any) {
   switch (method) {
@@ -210,31 +211,31 @@ function renderEvent(event: any) {
   }
 }
 
-export async function runProfile(rawConfig: ProfileConfig) {
+export async function runImp(rawConfig: ImpConfig) {
   // Fold any accumulated self-improvement lessons into developerInstructions
   // before anything reads them (interactive + cold paths). Idempotent.
   const config = applyLessonOverlay(rawConfig);
-  const { interactive, quiet, help, daemon, noWarm, effort, prompt, noArgs } = parseArgs(process.argv);
+  const { interactive, quiet, help, serve, noWarm, effort, prompt, noArgs } = parseArgs(process.argv);
 
   if (help || noArgs) {
-    console.log(`${config.name} — isolated codex agent (spark)
+    console.log(`${config.name} — isolated codex imp (spark)
 
 Usage:
-  ${config.name} <prompt>            Run with streaming (auto-warms a daemon for instant responses)
+  ${config.name} <prompt>            Run with streaming (auto-warms the imp for instant responses)
   ${config.name} -q <prompt>         Quiet mode (buffered, final answer only)
   ${config.name} -i [prompt]         Interactive codex TUI in this terminal
-  ${config.name} --no-warm <prompt>  Opt out: force a cold in-process run (no daemon)
-  ${config.name} --daemon            Run the warm daemon in the foreground (for supervisors)
-  ${config.name} --effort <level>    Reasoning effort: none|minimal|low|medium|high|xhigh (warm daemon)
+  ${config.name} --no-warm <prompt>  Opt out: force a cold in-process run (no warm imp)
+  ${config.name} --serve             Run the warm imp server in the foreground (for supervisors)
+  ${config.name} --effort <level>    Reasoning effort: none|minimal|low|medium|high|xhigh (warm imp)
   ${config.name} --help              Show this help
 
-By default the first call auto-starts a background daemon and every call routes
+By default the first call auto-starts a background warm imp and every call routes
 through it for ~2x lower latency. Use --no-warm to bypass it for a one-off run.`);
     process.exit(0);
   }
 
-  if (daemon) {
-    await runDaemon(config);
+  if (serve) {
+    await serveImp(config);
     return;
   }
 
@@ -242,7 +243,7 @@ through it for ~2x lower latency. Use --no-warm to bypass it for a one-off run.`
     // Launch the codex interactive TUI right here in the current terminal.
     // No cmux, no surfaces — the profile knows nothing about any terminal manager.
     const realHome = process.env.HOME!;
-    const isolatedHome = `/tmp/codex-profile-${config.name}-${process.pid}-interactive`;
+    const isolatedHome = `/tmp/codex-imp-${config.name}-${process.pid}-interactive`;
     const runtime = prepareIsolatedCodexHome(config, isolatedHome, realHome);
     const flags = buildInteractiveFlags(config, runtime.hooksEnabled);
     const args = [
@@ -285,18 +286,18 @@ through it for ~2x lower latency. Use --no-warm to bypass it for a one-off run.`
 
   const ac = new AbortController();
 
-  // Warm by default: auto-start (and reuse) a background daemon so every call
+  // Warm by default: auto-start (and reuse) a background imp so every call
   // routes through the persistent app-server — skips process spawn + auth/config
-  // load + WebSocket prewarm (paid once at daemon start). Opt out with --no-warm.
-  // If the daemon can't be brought up, fall through to a cold in-process run.
-  if (!noWarm && (await ensureDaemon(config))) {
+  // load + WebSocket prewarm (paid once at imp start). Opt out with --no-warm.
+  // If the imp can't be brought up, fall through to a cold in-process run.
+  if (!noWarm && (await ensureWarmImp(config))) {
     const onSignal = () => { ac.abort(); process.exit(130); };
     process.on("SIGINT", onSignal);
     process.on("SIGTERM", onSignal);
     let streamedAnswer = false;
     let routed = true;
     try {
-      await runViaDaemon(
+      await runViaWarmImp(
         config.name,
         { prompt, quiet, cwd: process.cwd(), effort },
         {
@@ -309,12 +310,12 @@ through it for ~2x lower latency. Use --no-warm to bypass it for a one-off run.`
             if (streamedAnswer) process.stdout.write("\n");
             else if (text) console.log(text);
           },
-          onError: (message) => { process.stderr.write(`\x1b[31mdaemon error: ${message}\x1b[0m\n`); },
+          onError: (message) => { process.stderr.write(`\x1b[31mimp error: ${message}\x1b[0m\n`); },
         },
         ac.signal,
       );
     } catch {
-      // Daemon died or the connection dropped mid-flight — fall back to cold.
+      // Imp died or the connection dropped mid-flight — fall back to cold.
       routed = false;
     } finally {
       process.off("SIGINT", onSignal);

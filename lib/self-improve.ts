@@ -1,7 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync } from "fs";
 import { dirname, join } from "path";
 import { createHash } from "crypto";
-import type { ProfileConfig } from "./isolated.ts";
+import type { ImpConfig } from "./isolated.ts";
 
 export interface SelfImproveConfig {
   /** Local self-improvement is on by default. Set false to opt out. */
@@ -10,7 +10,7 @@ export interface SelfImproveConfig {
   lessonsPath?: string;
   /** Optional receipt/debug log path. Default: `<lessonsPath>.debug.jsonl`. */
   receiptsPath?: string;
-  /** Enable Codex Stop-hook compatibility. Daemon-side observation is primary. */
+  /** Enable Codex Stop-hook compatibility. Imp-side observation is primary. */
   stopHook?: boolean;
   /** Maximum lessons appended from one turn. */
   maxLessonsPerTurn?: number;
@@ -50,6 +50,7 @@ const FAILED_STATES = new Set(["failed", "error", "errored"]);
 const EXIT_KEYS = new Set(["exit_code", "exitcode", "exit_status", "exitstatus"]);
 const LESSONS_HEADING = "## Self-improvement lessons";
 const OVERLAY_MARKER = "<!-- self-improve-overlay:v1 -->";
+const LESSON_MARKER_PREFIX = "<!-- selfimprove:";
 
 export function currentProfileSelfPath(): string {
   try {
@@ -68,7 +69,7 @@ export function defaultLessonsPath(selfPath = currentProfileSelfPath()): string 
 }
 
 function envEnablesProfile(name: string, env: Record<string, string | undefined>): boolean {
-  const value = env.CODEX_DAEMON_SELF_IMPROVE;
+  const value = env.CODEX_IMP_SELF_IMPROVE;
   if (!value) return false;
   if (value === "1" || value === "true" || value === "all") return true;
   return value
@@ -79,13 +80,13 @@ function envEnablesProfile(name: string, env: Record<string, string | undefined>
 }
 
 export function resolveSelfImprove(
-  config: ProfileConfig,
+  config: ImpConfig,
   env: Record<string, string | undefined> = process.env,
 ): ResolvedSelfImprove {
   const selfPath = currentProfileSelfPath();
   const libDir = profileLibDir(selfPath);
   const enabled = config.selfImprove?.enabled !== false || envEnablesProfile(config.name, env);
-  const mode = env.CODEX_DAEMON_SELF_IMPROVE_RECEIPTS === "1" ? "receipt" : config.selfImprove?.mode || "lesson";
+  const mode = env.CODEX_IMP_SELF_IMPROVE_RECEIPTS === "1" ? "receipt" : config.selfImprove?.mode || "lesson";
   const lessonsPath = config.selfImprove?.lessonsPath || defaultLessonsPath(selfPath);
   const receiptsPath = config.selfImprove?.receiptsPath || `${lessonsPath}.debug.jsonl`;
   const stopHook = config.selfImprove?.stopHook === true;
@@ -109,11 +110,11 @@ export function resolveSelfImprove(
   }
 
   const extraEnv: Record<string, string> = {
-    CODEX_DAEMON_SELF_IMPROVE: "1",
-    CODEX_DAEMON_NAME: config.name,
-    CODEX_DAEMON_SELF_PATH: selfPath,
-    CODEX_DAEMON_LIB_DIR: libDir,
-    CODEX_DAEMON_LESSONS_PATH: lessonsPath,
+    CODEX_IMP_SELF_IMPROVE: "1",
+    CODEX_IMP_NAME: config.name,
+    CODEX_IMP_SELF_PATH: selfPath,
+    CODEX_IMP_LIB_DIR: libDir,
+    CODEX_IMP_LESSONS_PATH: lessonsPath,
   };
   if (env.CODEX_SELF_IMPROVE_DEBUG) extraEnv.CODEX_SELF_IMPROVE_DEBUG = env.CODEX_SELF_IMPROVE_DEBUG;
 
@@ -133,12 +134,12 @@ export function resolveSelfImprove(
   };
 }
 
-export function lessonsPathFor(config: ProfileConfig): string | undefined {
+export function lessonsPathFor(config: ImpConfig): string | undefined {
   const resolved = resolveSelfImprove(config);
   return resolved.enabled ? resolved.lessonsPath : undefined;
 }
 
-export function applySelfImproveOverlay(config: ProfileConfig): ProfileConfig {
+export function applySelfImproveOverlay(config: ImpConfig): ImpConfig {
   const resolved = resolveSelfImprove(config);
   if (!resolved.enabled || resolved.mode !== "lesson" || !resolved.lessonsPath) return config;
   if (config.developerInstructions.includes(OVERLAY_MARKER) || config.developerInstructions.includes(LESSONS_HEADING)) {
@@ -147,20 +148,28 @@ export function applySelfImproveOverlay(config: ProfileConfig): ProfileConfig {
   if (!existsSync(resolved.lessonsPath)) return config;
   const lessons = readFileSync(resolved.lessonsPath, "utf8").trim();
   if (!lessons) return config;
-  const capped = lessons.length > resolved.maxLessonBytes ? lessons.slice(-resolved.maxLessonBytes) : lessons;
+  const capped = capAtLessonBoundary(lessons, resolved.maxLessonBytes);
   return {
     ...config,
     developerInstructions: `${config.developerInstructions}
 
 ${OVERLAY_MARKER}
 ${LESSONS_HEADING}
-These are local operational reminders from prior failed tool calls. They do not override this profile's operating rule, safety constraints, permission boundaries, sandbox rules, or tool-specific guardrails.
+Each lesson below records a command that failed in a previous run, why it failed, and the fix. Before you run a command, check whether a lesson covers it; if one does, apply the fix the FIRST time instead of repeating the failure. Lessons never override this profile's operating rule, safety constraints, permission boundaries, sandbox rules, or tool-specific guardrails.
 
 ${capped}`,
   };
 }
 
-export function selfImproveFingerprintParts(config: ProfileConfig): string[] {
+/** Keep the newest lessons, cutting at a lesson marker so no lesson is truncated mid-sentence. */
+export function capAtLessonBoundary(lessons: string, maxBytes: number): string {
+  if (lessons.length <= maxBytes) return lessons;
+  const tail = lessons.slice(-maxBytes);
+  const idx = tail.indexOf(LESSON_MARKER_PREFIX);
+  return idx > 0 ? tail.slice(idx) : tail;
+}
+
+export function selfImproveFingerprintParts(config: ImpConfig): string[] {
   const resolved = resolveSelfImprove(config);
   const parts = [
     `selfImprove.enabled=${resolved.enabled}`,
@@ -248,7 +257,98 @@ export function scanTranscript(jsonl: string): Failure[] {
   return failures;
 }
 
+export type FailureCategory =
+  | "command-not-found"
+  | "usage-error"
+  | "missing-path"
+  | "permission-denied"
+  | "timeout"
+  | "connection-error"
+  | "generic";
+
+/**
+ * Map a failure onto the corrective action a low-reasoning model should take.
+ * Categories are matched most-specific-first; "generic" is the fallback.
+ */
+export function classifyFailure(failure: Failure): FailureCategory {
+  const msg = (failure.message || "").toLowerCase();
+  if (failure.exit === 127 || msg.includes("command not found") || msg.includes("not found on path") || msg.includes("executable file not found")) {
+    return "command-not-found";
+  }
+  if (failure.exit === 126 || msg.includes("permission denied") || msg.includes("operation not permitted") || msg.includes("access denied")) {
+    return "permission-denied";
+  }
+  if (failure.exit === 124 || msg.includes("timed out") || msg.includes("timeout")) {
+    return "timeout";
+  }
+  if (
+    msg.includes("connection refused") ||
+    msg.includes("could not connect") ||
+    msg.includes("econnrefused") ||
+    msg.includes("no such socket") ||
+    msg.includes("connection reset") ||
+    msg.includes("network is unreachable")
+  ) {
+    return "connection-error";
+  }
+  if (
+    msg.includes("usage:") ||
+    msg.includes("unknown option") ||
+    msg.includes("unknown flag") ||
+    msg.includes("unknown command") ||
+    msg.includes("unknown subcommand") ||
+    msg.includes("unrecognized") ||
+    msg.includes("invalid option") ||
+    msg.includes("invalid argument") ||
+    msg.includes("unexpected argument") ||
+    msg.includes("required flag") ||
+    failure.exit === 64
+  ) {
+    return "usage-error";
+  }
+  if (msg.includes("no such file or directory") || msg.includes("does not exist") || msg.includes("not a directory") || msg.includes("enoent")) {
+    return "missing-path";
+  }
+  return "generic";
+}
+
+const CATEGORY_ADVICE: Record<FailureCategory, string> = {
+  "command-not-found":
+    "The executable name is wrong or not installed. Before using it again, verify it with `command -v TOOL`; if it is missing, report the blocker instead of retrying or guessing an alternative spelling.",
+  "usage-error":
+    "The flags or arguments were wrong. Run the narrow help for that exact subcommand (`TOOL SUBCOMMAND --help`) and copy the flag names exactly from the help output; never guess flags.",
+  "missing-path":
+    "The path did not exist. List the parent directory first (`ls PARENT_DIR`) to find the real path, then retry with the path copied from that listing.",
+  "permission-denied":
+    "Permission was denied. Do not retry with sudo or work around the restriction; report the blocker unless the user explicitly asked for a privileged action.",
+  timeout:
+    "The command ran too long or waited for input. Use a narrower, non-interactive variant: add limits/filters, pass non-interactive flags, or scope to a smaller target.",
+  "connection-error":
+    "The target service or socket was unreachable. First verify the service is running and the host/port/socket path is correct, then retry once.",
+  generic:
+    "Read the failure output before retrying. If syntax is uncertain, run the narrow `--help`/discovery command first, then retry once with corrected syntax.",
+};
+
+/**
+ * Expected non-failures: query-style commands where exit 1 means "no match" /
+ * "false" / "differs", not an error. Recording these as lessons teaches noise.
+ */
+export function isExpectedNonzero(failure: Failure): boolean {
+  if (failure.kind !== "nonzero-exit" || failure.exit !== 1) return false;
+  let cmd = (failure.command || "").trim();
+  // Unwrap shell wrappers like `/bin/zsh -lc '...'`.
+  const wrapped = cmd.match(/^\S*(?:zsh|bash|sh)\s+-[a-z]*c\s+(.*)$/);
+  if (wrapped) cmd = wrapped[1].replace(/^['"]/, "").trim();
+  return /^(?:\S*\/)?(rg|grep|egrep|fgrep|test|\[|diff|cmp|which|pgrep|command\s+-v|git\s+diff|git\s+grep)\b/.test(cmd);
+}
+
+function firstLine(s: string): string {
+  return s.split(/\r?\n/).find((line) => line.trim()) ?? "";
+}
+
 export function signature(failure: Failure): string {
+  // Hash the stable parts only: volatile output (timestamps, pids, paths in
+  // later lines) would make every occurrence look new and flood the overlay.
   return createHash("sha256")
     .update(
       [
@@ -256,7 +356,7 @@ export function signature(failure: Failure): string {
         failure.exit ?? "",
         failure.status ?? "",
         redactSecrets(failure.command ?? ""),
-        redactSecrets(failure.message ?? ""),
+        redactSecrets(firstLine(failure.message ?? "")).slice(0, 200),
       ].join("\n"),
     )
     .digest("hex")
@@ -264,26 +364,23 @@ export function signature(failure: Failure): string {
 }
 
 export function lessonFor(failure: Failure, maxCapturedOutputBytes = 1_200): string {
-  const marker = `<!-- selfimprove:${signature(failure)} -->`;
-  const command = failure.command ? ` Command: \`${trunc(failure.command, 160)}\`.` : "";
-  const exit = failure.exit !== undefined ? ` Exit: ${failure.exit}.` : "";
-  const status = failure.status ? ` Status: ${failure.status}.` : "";
+  const marker = `${LESSON_MARKER_PREFIX}${signature(failure)} -->`;
+  const category = classifyFailure(failure);
+  const subject = failure.command ? `Command \`${trunc(failure.command, 160)}\`` : "A tool call";
+  const exit = failure.exit !== undefined ? ` exited ${failure.exit}` : " failed";
+  const status = failure.status ? ` (status: ${failure.status})` : "";
   const msg = failure.message ? ` Evidence: ${trunc(failure.message, maxCapturedOutputBytes)}` : "";
-  return [
-    "",
-    marker,
-    `- A previous turn produced a failed tool/command result.${command}${exit}${status} Next time, read the failure output before retrying; if syntax is uncertain, run the narrow \`--help\`/discovery command first, then retry once with corrected syntax.${msg}`,
-    "",
-  ].join("\n");
+  return ["", marker, `- [${category}] ${subject}${exit}${status}. ${CATEGORY_ADVICE[category]}${msg}`, ""].join("\n");
 }
 
 export function recordLessons(lessonsPath: string, failures: Failure[], max = 3, maxCapturedOutputBytes = 1_200): number {
-  if (failures.length === 0) return 0;
+  const worthRecording = failures.filter((f) => !isExpectedNonzero(f));
+  if (worthRecording.length === 0) return 0;
   mkdirSync(dirname(lessonsPath), { recursive: true });
   const existing = existsSync(lessonsPath) ? readFileSync(lessonsPath, "utf8") : "";
   let written = 0;
   const seen = new Set<string>();
-  for (const failure of failures) {
+  for (const failure of worthRecording) {
     if (written >= max) break;
     const sig = signature(failure);
     if (seen.has(sig) || existing.includes(`selfimprove:${sig}`)) continue;
@@ -309,12 +406,13 @@ export interface SelfImproveObserver {
   finish(extra?: Record<string, unknown>): number;
 }
 
-export function createSelfImproveObserver(config: ProfileConfig): SelfImproveObserver {
+export function createSelfImproveObserver(config: ImpConfig): SelfImproveObserver {
   const resolved = resolveSelfImprove(config);
   const failures: Failure[] = [];
 
   const addFailure = (failure: Failure) => {
     if (!resolved.enabled || failures.length >= 20) return;
+    if (isExpectedNonzero(failure)) return;
     failures.push({
       ...failure,
       command: failure.command ? redactSecrets(failure.command) : undefined,
@@ -380,7 +478,7 @@ export function createSelfImproveObserver(config: ProfileConfig): SelfImproveObs
   };
 }
 
-export function stopHookEnabled(config: ProfileConfig): boolean {
+export function stopHookEnabled(config: ImpConfig): boolean {
   const resolved = resolveSelfImprove(config);
   return resolved.enabled && resolved.stopHook;
 }

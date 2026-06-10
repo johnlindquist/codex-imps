@@ -5,9 +5,9 @@
  *   - process exit (total)
  *
  * Usage:
- *   bun bench.ts pro-gh "say hi"             # cold (no daemon)
- *   bun bench.ts pro-gh "say hi" --runs 5
- *   bun bench.ts pro-gh "say hi" --warm      # assumes daemon is already running
+ *   bun bench.ts imp-gh "say hi"             # cold (no imp)
+ *   bun bench.ts imp-gh "say hi" --runs 5
+ *   bun bench.ts imp-gh "say hi" --warm      # assumes imp is already running
  */
 
 import { spawn } from "child_process";
@@ -28,7 +28,7 @@ if (!profile || !prompt) {
   process.exit(1);
 }
 
-const profilePath = join(import.meta.dir, "daemons", profile);
+const profilePath = join(import.meta.dir, "imps", profile);
 
 interface Sample { ttft: number; total: number; }
 const samples: Sample[] = [];
@@ -65,7 +65,7 @@ const stats = (key: keyof Sample) => {
   return { min, median, mean, max };
 };
 
-console.log(`\n=== ${warm ? "WARM (via daemon)" : "COLD"} — ${profile} — ${runs} runs ===`);
+console.log(`\n=== ${warm ? "WARM (via imp)" : "COLD"} — ${profile} — ${runs} runs ===`);
 const t = stats("ttft");
 const o = stats("total");
 console.log(`TTFT   min=${t.min.toFixed(0)}ms  median=${t.median.toFixed(0)}ms  mean=${t.mean.toFixed(0)}ms  max=${t.max.toFixed(0)}ms`);

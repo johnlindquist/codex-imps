@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { parseArgs } from "../lib/isolated.ts";
 
 // parseArgs receives full argv; it slices off the first two (node, script).
-const argv = (...rest: string[]) => ["bun", "pro-x", ...rest];
+const argv = (...rest: string[]) => ["bun", "imp-x", ...rest];
 
 test("bare prompt is preserved (regression: --effort once dropped arg 0)", () => {
   const r = parseArgs(argv("summarize the history"));
@@ -43,8 +43,9 @@ test("--no-warm sets noWarm and keeps prompt", () => {
   expect(r.prompt).toBe("say hi");
 });
 
-test("--daemon flag", () => {
-  expect(parseArgs(argv("--daemon")).daemon).toBe(true);
+test("--serve flag", () => {
+  expect(parseArgs(argv("--serve")).serve).toBe(true);
+  expect(parseArgs(argv("--daemon")).serve).toBe(true); // back-compat alias
 });
 
 test("no args sets noArgs", () => {

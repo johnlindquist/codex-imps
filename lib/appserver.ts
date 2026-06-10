@@ -16,7 +16,7 @@
 
 import { spawn, type ChildProcess } from "child_process";
 import { rmSync } from "fs";
-import type { ProfileConfig } from "./isolated.ts";
+import type { ImpConfig } from "./isolated.ts";
 import { applyLessonOverlay, prepareIsolatedCodexHome } from "./codex-runtime.ts";
 import { createSelfImproveObserver } from "./self-improve.ts";
 
@@ -32,16 +32,16 @@ export class AppServerClient {
   private handlers = new Set<(msg: any) => void>();
   private nextId = 1;
   private stderrTail = "";
-  private config: ProfileConfig;
+  private config: ImpConfig;
   private model: string;
   private ready = false;
   private hooksEnabled = false;
 
-  constructor(config: ProfileConfig) {
+  constructor(config: ImpConfig) {
     // Fold accumulated self-improvement lessons into developerInstructions once,
-    // at daemon start. Hot-reload restarts this daemon when the overlay changes.
+    // at imp start. Hot-reload restarts this imp when the overlay changes.
     this.config = applyLessonOverlay(config);
-    this.model = this.config.model || process.env.CODEX_PROFILE_MODEL || "gpt-5.3-codex-spark";
+    this.model = this.config.model || process.env.CODEX_IMP_MODEL || process.env.CODEX_PROFILE_MODEL || "gpt-5.3-codex-spark";
     this.isolatedHome = `/tmp/codex-appserver-${this.config.name}-${process.pid}`;
   }
 
@@ -72,7 +72,7 @@ export class AppServerClient {
     });
 
     const initId = this.send("initialize", {
-      clientInfo: { name: `codex-profile-${this.config.name}`, version: "0.3.0" },
+      clientInfo: { name: `codex-imp-${this.config.name}`, version: "0.3.0" },
       capabilities: { experimentalApi: true },
     });
     await this.awaitResponse(initId);
@@ -150,7 +150,7 @@ export class AppServerClient {
         memories: { use_memories: false },
         mcp_servers: {},
         web_search: "disabled",
-        // Non-interactive isolated daemons own a throwaway CODEX_HOME, so user
+        // Non-interactive isolated imps own a throwaway CODEX_HOME, so user
         // hooks can't be approved via a TUI — bypass trust to let them run.
         // Passed here (not just config.toml) because thread/start config does
         // not inherit the on-disk bypass flag.
