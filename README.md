@@ -4,6 +4,8 @@ Single-purpose, isolated [Codex SDK](https://www.npmjs.com/package/@openai/codex
 
 All imps start with `imp-` so you can type `imp-` and tab-complete to summon the whole roster.
 
+Where is all this headed? [VISION.md](./VISION.md) — the perfect future we're building toward and the creed every change is measured against.
+
 ## What is an imp?
 
 An imp is a single executable TypeScript file that wraps a CLI tool with an isolated Codex agent. It:
