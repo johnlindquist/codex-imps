@@ -30,6 +30,41 @@ test("no match lists candidates and exits 2", () => {
   expect(r.out).toContain("imp-git");
 });
 
+test("compound prompt splits into sequential imps", () => {
+  const r = which("find all the TODOs in src; then commit the changes");
+  expect(r.code).toBe(0);
+  const lines = r.out.split("\n");
+  expect(lines).toHaveLength(2);
+  expect(lines[0]).toContain("imp-rg");
+  expect(lines[0]).toContain("find all the TODOs in src");
+  expect(lines[1]).toContain("imp-git");
+  expect(lines[1]).toContain("commit the changes");
+});
+
+test("'then' splits, but an unclear segment falls back to whole-prompt routing", () => {
+  expect(which("open a new pane beneath this one then cd to ~/.agents").out).toBe("imp-cmux");
+});
+
+test("a bare 'and' never splits a single task", () => {
+  expect(which("open a new pane beneath this one and cd to ~/.agents").out).toBe("imp-cmux");
+});
+
+test("segments routing to the same imp stay one dispatch", () => {
+  expect(which("count the json objects; then list the json keys").out).toBe("imp-jq");
+});
+
+test("imps CLI forwards free-text prompts to the router", () => {
+  const IMPS = join(import.meta.dir, "..", "imps.ts");
+  const r = spawnSync("bun", [IMPS, "--which", "what changed in git since yesterday?"], { encoding: "utf8" });
+  expect(r.status).toBe(0);
+  expect(r.stdout.trim()).toBe("imp-git");
+  expect(r.stderr).toContain("routing via");
+  // A near-miss subcommand must NOT forward (no money spent on a typo).
+  const typo = spawnSync("bun", [IMPS, "lis"], { encoding: "utf8" });
+  expect(typo.status).toBe(1);
+  expect(typo.stdout).toContain("Usage:");
+});
+
 test("-l lists routes and --help prints usage", () => {
   const list = spawnSync("bun", [ROUTER, "-l"], { encoding: "utf8" });
   expect(list.status).toBe(0);

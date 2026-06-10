@@ -4,6 +4,7 @@
  *
  *   imp "what changed in git since yesterday?"   keyword-routes to imp-git
  *   imp git "what changed?"                      explicit tool prefix, no guessing
+ *   imp "find the TODOs in src; then commit"     compound: imp-rg, then imp-git
  *   imp --which "list my PRs"                    print the routing decision, don't run
  *   imp -l                                       list all routes
  *
@@ -11,6 +12,12 @@
  * predictable. When nothing matches (or several imps tie), it lists candidates
  * instead of guessing — a wrong imp acting on a vague prompt is worse than a
  * second keystroke. Flags after routing (-q, --effort, --no-warm) pass through.
+ *
+ * Compound prompts: strong connectors (";", ". ", "then", "after that") split
+ * the prompt, and when every segment routes cleanly to an imp the steps run
+ * sequentially, each imp getting only its own segment. A bare "and" never
+ * splits ("open a pane and cd into it" is one cmux task), and if ANY segment
+ * is unclear the split is abandoned in favor of whole-prompt routing.
  */
 import { spawn } from "child_process";
 import { readdirSync } from "fs";
@@ -73,12 +80,61 @@ function pickRoute(prompt: string): { winner?: Route; scores: Array<{ route: Rou
   return { winner: scored[0].route, scores: scored };
 }
 
+interface Step {
+  imp: string;
+  prompt: string;
+}
+
+// Strong connectors only. A bare " and " is NOT a split point — "open a pane
+// and cd into it" is one task. "." splits only when followed by whitespace, so
+// file names (intro.mp4, ~/.agents) survive.
+const CONNECTOR_SRC = String.raw`(?:;|\.(?=\s)|\b(?:and\s+)?then\b|\bafter\s+that\b|\bafterwards?\b)`;
+
+function splitPrompt(prompt: string): string[] {
+  return prompt
+    .split(new RegExp(CONNECTOR_SRC, "gi"))
+    .map((s) => s.replace(/^[\s,]+(?:and\s+)?/i, "").replace(/[\s,.]+$/, "").trim())
+    .filter((s) => /[a-z]/i.test(s));
+}
+
+/**
+ * Compound routing: every segment must route cleanly, consecutive segments
+ * with the same imp merge back into one step, and a plan only exists when at
+ * least two DIFFERENT imps are involved. Anything less falls back (null) to
+ * whole-prompt routing — splitting must never make routing worse.
+ */
+function planRoute(prompt: string, available: Set<string>): Step[] | null {
+  const segments = splitPrompt(prompt);
+  if (segments.length < 2) return null;
+  const steps: Step[] = [];
+  for (const seg of segments) {
+    const { winner } = pickRoute(seg);
+    if (!winner || !available.has(winner.imp)) return null;
+    const prev = steps[steps.length - 1];
+    if (prev && prev.imp === winner.imp) prev.prompt += "; " + seg;
+    else steps.push({ imp: winner.imp, prompt: seg });
+  }
+  return steps.length >= 2 ? steps : null;
+}
+
+function runStep(imp: string, args: string[]): Promise<number> {
+  return new Promise((resolve) => {
+    const child = spawn(join(IMPS_DIR, imp), args, { stdio: "inherit", cwd: process.cwd() });
+    child.on("exit", (code, signal) => resolve(signal ? 130 : code ?? 0));
+    child.on("error", (e) => {
+      console.error(`imp: failed to launch ${imp}: ${e.message}`);
+      resolve(1);
+    });
+  });
+}
+
 function usage(): void {
   console.log(`imp — summon the right imp for a prompt
 
 Usage:
   imp <prompt>            route by keywords and run the matching imp
   imp <tool> <prompt>     explicit: imp git "...", imp jq "..." (no guessing)
+  imp "<a>; then <b>"     compound: each segment runs on its own imp, in order
   imp --which <prompt>    print the routing decision without running
   imp -l | --list         list all routes
 
@@ -110,6 +166,26 @@ if (first && (names.has(first) || names.has(`imp-${first}`))) {
   impArgs = passthrough.slice(1);
 } else {
   const promptText = passthrough.filter((a) => !a.startsWith("-")).join(" ");
+  const flagArgs = passthrough.filter((a) => a.startsWith("-"));
+
+  const steps = planRoute(promptText, names);
+  if (steps) {
+    if (which) {
+      for (const s of steps) console.log(`${s.imp.padEnd(24)}${s.prompt}`);
+      process.exit(0);
+    }
+    for (let i = 0; i < steps.length; i++) {
+      const s = steps[i];
+      console.error(`[${i + 1}/${steps.length}] ${s.imp}: ${s.prompt}`);
+      const code = await runStep(s.imp, [...flagArgs, s.prompt]);
+      if (code !== 0) {
+        console.error(`imp: ${s.imp} exited ${code} — skipping ${steps.length - i - 1} remaining step(s)`);
+        process.exit(code);
+      }
+    }
+    process.exit(0);
+  }
+
   const { winner, scores } = pickRoute(promptText);
   if (winner && names.has(winner.imp)) {
     target = winner.imp;

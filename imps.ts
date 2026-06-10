@@ -13,7 +13,7 @@
  */
 import { existsSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "fs";
 import { join } from "path";
-import { spawnSync } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import { metaPath, readMeta, socketPath, stopWarmImp, tryConnect } from "./lib/imp.ts";
 import { parseLessons, pruneExpiredLessons } from "./lib/self-improve.ts";
 
@@ -203,7 +203,23 @@ switch (cmd) {
   case "doctor":
     await cmdDoctor();
     break;
-  default:
+  default: {
+    // Free-text prompts forward to the `imp` router — `imps "open a pane..."`
+    // is a near-certain typo for `imp "..."`, so make it just work. Only
+    // forward what is unmistakably a prompt (an arg with spaces, or 3+ words),
+    // never a near-miss subcommand like `imps lis`.
+    const free = [cmd, ...(rest ?? [])].filter((a): a is string => Boolean(a));
+    const looksLikePrompt =
+      free.some((a) => /\s/.test(a)) || free.filter((a) => !a.startsWith("-")).length >= 3;
+    if (cmd && cmd !== "--help" && cmd !== "-h" && looksLikePrompt) {
+      console.error("(not a fleet command — routing via `imp`)");
+      const code = await new Promise<number>((resolve) => {
+        const child = spawn(join(import.meta.dir, "imp.ts"), free, { stdio: "inherit", cwd: process.cwd() });
+        child.on("exit", (c, signal) => resolve(signal ? 130 : c ?? 0));
+        child.on("error", () => resolve(1));
+      });
+      process.exit(code);
+    }
     console.log(`imps — manage the fleet of codex imps
 
 Usage:
@@ -214,6 +230,9 @@ Usage:
   imps lessons <name> --prune [--days N]   age out old lessons
   imps lessons <name> --promote  print Error-recovery candidates to graduate
   imps lessons <name> --clear    delete the lessons file
-  imps doctor                    environment sanity checks`);
+  imps doctor                    environment sanity checks
+
+A free-text prompt routes via the \`imp\` router: imps "what changed in git?"`);
     process.exit(cmd && cmd !== "--help" && cmd !== "-h" ? 1 : 0);
+  }
 }

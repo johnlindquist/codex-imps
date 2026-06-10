@@ -111,6 +111,16 @@ imp --which "list my PRs"                      # print the routing decision only
 imp -l                                         # list all routes
 ```
 
+Compound prompts route to **multiple imps, in order**. Strong connectors (`;`, `. `, `then`, `after that`) split the prompt, and when every segment routes cleanly each imp runs with only its own segment:
+
+```bash
+imp "find the TODOs in src; then commit everything"
+# [1/2] imp-rg: find the TODOs in src
+# [2/2] imp-git: commit everything
+```
+
+A bare `and` never splits ("open a pane and cd into it" is one cmux task), consecutive segments for the same imp merge back into one call, and if *any* segment is unclear the split is abandoned for whole-prompt routing — splitting can only ever make routing better. A failing step stops the chain. `imp --which` prints the full plan.
+
 ### Manage the fleet: `imps`
 
 ```bash
@@ -125,6 +135,8 @@ imps doctor                  # env sanity checks + stale socket cleanup
 ```
 
 Warm imps **shut themselves down after 30 idle minutes** (the next call transparently respawns one). Tune with `CODEX_IMP_IDLE_MINUTES` (`0` disables).
+
+Typed `imps "do the thing"` when you meant `imp`? It forwards: anything that isn't a fleet command but looks like a prompt routes via the `imp` router. Near-miss subcommands (`imps lis`) still show usage instead of spending a model turn.
 
 ### Warm mode (on by default)
 
