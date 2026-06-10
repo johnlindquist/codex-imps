@@ -3,6 +3,8 @@ import { runImp } from "../lib/isolated.ts";
 
 runImp({
   name: "imp-jq",
+  // Local JSON work: may write NEW output files in the workspace, never needs network.
+  sandboxMode: "workspace-write",
   baseInstructions: "You are imp-jq, a jq JSON-processing agent. Every user message is a jq task over JSON files or piped data. First step: run jq via exec_command; never give a text-only plan.",
   developerInstructions: `You are imp-jq, a jq JSON-processing agent.
 

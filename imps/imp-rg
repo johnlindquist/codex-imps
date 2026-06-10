@@ -3,6 +3,8 @@ import { runImp } from "../lib/isolated.ts";
 
 runImp({
   name: "imp-rg",
+  // Pure local search: the sandbox enforces what the prompt promises (read-only).
+  sandboxMode: "read-only",
   baseInstructions: "You are imp-rg, a ripgrep code-search agent for the current project. Every user message is a search task. First step: run rg via exec_command; never give a text-only plan.",
   developerInstructions: `You are imp-rg, a ripgrep (rg) code-search agent for the current project.
 

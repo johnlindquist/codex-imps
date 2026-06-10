@@ -57,8 +57,15 @@ bun imps/imp-gh "list my open PRs"
 | `imp-bird` | [bird](https://www.npmjs.com/package/bird) | Twitter/X CLI |
 | `imp-browser` | [agent-browser](https://www.npmjs.com/package/agent-browser) | Browser automation (hidden/headless browser it owns) |
 | `imp-browser-automate` | [agent-browser](https://www.npmjs.com/package/agent-browser) | Drives your **live** Chrome over CDP — your real tabs, logins, session |
+| `imp-ffmpeg` | [ffmpeg](https://ffmpeg.org) | Video/audio: probe, convert, trim, scale, extract, GIFs (never overwrites inputs) |
+| `imp-imagemagick` | [magick](https://imagemagick.org) | Images: identify, resize, crop, convert, montage (never overwrites originals) |
+| `imp-yt-dlp` | [yt-dlp](https://github.com/yt-dlp/yt-dlp) | Video downloads: formats, audio-only, subtitles, playlists (guarded bulk) |
+| `imp-osascript` | osascript | macOS automation: apps, notifications, dialogs, clipboard, Finder (guarded UI control) |
+| `imp-brew` | [brew](https://brew.sh) | Homebrew: search, info, outdated, deps (guarded install/upgrade/cleanup) |
 | `imp-selfimprove` | — | **Experimental** self-improving imp — learns from its own failed commands |
 | `imp-minimal` | — | Bare template for building your own |
+
+Local-only imps run sandboxed to match their promises: `imp-rg` is `read-only`; `imp-jq`, `imp-packx`, `imp-ffmpeg`, and `imp-imagemagick` are `workspace-write`. The sandbox enforces what the prompt claims.
 
 ## Usage
 
@@ -79,6 +86,43 @@ imp-gh --help
 
 # Ctrl+C to stop at any time — kills agent + commands cleanly
 ```
+
+### Pipe data in
+
+Piped stdin is saved to a temp file and pointed out to the imp, so imps compose in pipelines:
+
+```bash
+cat data.json | imp-jq "how many users are on the pro plan?"
+curl -s https://api.example.com/things | imp-jq "group these by status and count"
+git log --oneline -30 | imp-git "summarize what shipped this week"
+```
+
+### Route without thinking: `imp`
+
+`imp` picks the right imp from your prompt by deliberate keyword matching (free, instant, predictable — not a model call). When nothing matches or several imps tie, it lists candidates instead of guessing.
+
+```bash
+imp "what changed in git since yesterday?"     # -> imp-git
+imp "trim the first 10s off intro.mp4"         # -> imp-ffmpeg
+imp git "what changed?"                        # explicit tool prefix, no guessing
+imp --which "list my PRs"                      # print the routing decision only
+imp -l                                         # list all routes
+```
+
+### Manage the fleet: `imps`
+
+```bash
+imps list                    # roster: every imp, warm status, lesson count
+imps ps                      # warm imps: pid, uptime, idle timeout
+imps stop imp-gh             # stop one warm imp (or: imps stop --all)
+imps lessons                 # which imps have learned lessons
+imps lessons imp-gh          # one imp's lessons: date, category, command
+imps lessons imp-gh --promote  # paste-ready Error-recovery candidates
+imps lessons imp-gh --prune    # age out old lessons now
+imps doctor                  # env sanity checks + stale socket cleanup
+```
+
+Warm imps **shut themselves down after 30 idle minutes** (the next call transparently respawns one). Tune with `CODEX_IMP_IDLE_MINUTES` (`0` disables).
 
 ### Warm mode (on by default)
 
@@ -118,6 +162,8 @@ imp-selfimprove "what have you learned so far?"      # turn 2: restarted, lesson
 ```
 
 How it knows itself: self-improving imps receive `CODEX_IMP_SELF_PATH`, `CODEX_IMP_LIB_DIR`, and `CODEX_IMP_LESSONS_PATH` in the spawned Codex environment. Opted-out imps receive none of that self-improvement env. Lessons are deduped by a content signature (stable parts only, so volatile output doesn't defeat dedup), common secrets are redacted before rendering, and the writer fails open — a broken self-improvement step never breaks your turn.
+
+**Lessons have a lifecycle.** Each lesson carries its date; lessons older than 30 days (configurable via `selfImprove.maxLessonAgeDays`) are pruned automatically whenever new lessons are appended, so stale guidance ages out instead of accumulating forever. Inspect with `imps lessons <name>`, prune on demand with `--prune`, and **graduate** a proven lesson into the imp's permanent `## Error recovery` section with `--promote` (it prints paste-ready lines).
 
 **Why it's experimental (and the sharp edges):**
 
@@ -211,6 +257,16 @@ Each imp creates a temporary `CODEX_HOME` with only a symlinked `auth.json`. Com
 | Skills, plugins, hooks, memories | varies | Feature flags |
 
 See [docs/ISOLATION.md](docs/ISOLATION.md) for the full research with source line references.
+
+## Evals (model-paid behavioral checks)
+
+`bun test` proves the imps *load*; evals prove they *behave*. Each suite in `evals/` runs real prompts against a hermetic temp-dir fixture and asserts on the answer **and** the resulting filesystem (e.g. imp-jq must create `users.csv` and must NOT touch `users.json`; imp-git must commit only the named file and leave unrelated dirty files alone). One model turn per case — run after editing an imp's prompt; hot-reload means the very next eval exercises the change.
+
+```bash
+bun run evals               # all suites
+bun evals.ts imp-jq         # one suite
+bun evals.ts imp-git --filter commit --keep   # one case, keep sandbox for post-mortem
+```
 
 ## Tests
 

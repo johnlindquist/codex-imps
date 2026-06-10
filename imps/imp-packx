@@ -3,6 +3,8 @@ import { runImp } from "../lib/isolated.ts";
 
 runImp({
   name: "imp-packx",
+  // Local bundling: writes bundle files in the workspace, never needs network.
+  sandboxMode: "workspace-write",
   baseInstructions: "You are imp-packx, a packx context-bundling agent. Every user message is a packx task. First step: run packx via exec_command; never give a text-only plan.",
   developerInstructions: `You are imp-packx, a packx context-bundling agent.
 

@@ -27,11 +27,19 @@
     "imp-browser-automate": "./imps/imp-browser-automate",
     "imp-selfimprove": "./imps/imp-selfimprove",
     "imp-minimal": "./imps/imp-minimal",
-    "imp-create": "./create.ts"
+    "imp-ffmpeg": "./imps/imp-ffmpeg",
+    "imp-imagemagick": "./imps/imp-imagemagick",
+    "imp-yt-dlp": "./imps/imp-yt-dlp",
+    "imp-osascript": "./imps/imp-osascript",
+    "imp-brew": "./imps/imp-brew",
+    "imp-create": "./create.ts",
+    "imp": "./imp.ts",
+    "imps": "./imps.ts"
   },
   "scripts": {
     "create": "bun create.ts",
-    "test": "bun test"
+    "test": "bun test",
+    "evals": "bun evals.ts"
   },
   "devDependencies": {
     "@types/bun": "latest"

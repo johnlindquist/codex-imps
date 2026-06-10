@@ -6,7 +6,7 @@
  */
 
 import { Codex, type CodexOptions, type ThreadOptions } from "@openai/codex-sdk";
-import { rmSync } from "fs";
+import { rmSync, unlinkSync, writeFileSync } from "fs";
 import { spawn } from "child_process";
 import { ensureWarmImp, runViaWarmImp, serveImp } from "./imp.ts";
 import {
@@ -124,6 +124,14 @@ function buildInteractiveFlags(config: ImpConfig, hooksOn = false): string[] {
 
 function tomlEscape(s: string): string {
   return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+/** Prompt suffix pointing the imp at piped-stdin data saved to a temp file. */
+export function stdinPromptSuffix(stdinFilePath: string): string {
+  return `
+
+[piped input] Data was piped to this command on stdin and saved to the file: ${stdinFilePath}
+Treat that file as the input for this task. Read it with the narrowest command (head, sed -n, jq, rg). Do not ask the user to provide the data again.`;
 }
 
 export function parseArgs(argv: string[]) {
@@ -284,6 +292,23 @@ through it for ~2x lower latency. Use --no-warm to bypass it for a one-off run.`
     process.exit(1);
   }
 
+  // Piped stdin becomes a temp file the imp can read with shell commands, so
+  // `cat data.json | imp-jq "count users"` just works. TTY stdin is ignored;
+  // an open-but-empty pipe yields "" and is also ignored.
+  let effectivePrompt = prompt;
+  let stdinFile: string | undefined;
+  if (!process.stdin.isTTY) {
+    const data = await Bun.stdin.text();
+    if (data.trim()) {
+      stdinFile = `/tmp/codex-imp-stdin-${config.name}-${process.pid}`;
+      writeFileSync(stdinFile, data);
+      effectivePrompt = prompt + stdinPromptSuffix(stdinFile);
+    }
+  }
+  const cleanupStdin = () => {
+    if (stdinFile) { try { unlinkSync(stdinFile); } catch {} }
+  };
+
   const ac = new AbortController();
 
   // Warm by default: auto-start (and reuse) a background imp so every call
@@ -291,7 +316,7 @@ through it for ~2x lower latency. Use --no-warm to bypass it for a one-off run.`
   // load + WebSocket prewarm (paid once at imp start). Opt out with --no-warm.
   // If the imp can't be brought up, fall through to a cold in-process run.
   if (!noWarm && (await ensureWarmImp(config))) {
-    const onSignal = () => { ac.abort(); process.exit(130); };
+    const onSignal = () => { ac.abort(); cleanupStdin(); process.exit(130); };
     process.on("SIGINT", onSignal);
     process.on("SIGTERM", onSignal);
     let streamedAnswer = false;
@@ -299,7 +324,7 @@ through it for ~2x lower latency. Use --no-warm to bypass it for a one-off run.`
     try {
       await runViaWarmImp(
         config.name,
-        { prompt, quiet, cwd: process.cwd(), effort },
+        { prompt: effectivePrompt, quiet, cwd: process.cwd(), effort },
         {
           onNotification: (method, params) => {
             if (method === "item/agentMessage/delta") streamedAnswer = true;
@@ -321,11 +346,14 @@ through it for ~2x lower latency. Use --no-warm to bypass it for a one-off run.`
       process.off("SIGINT", onSignal);
       process.off("SIGTERM", onSignal);
     }
-    if (routed) return;
+    if (routed) {
+      cleanupStdin();
+      return;
+    }
   }
 
   const { startThread, cleanup } = createIsolatedCodex(config);
-  const onSignal = () => { ac.abort(); cleanup(); process.exit(130); };
+  const onSignal = () => { ac.abort(); cleanupStdin(); cleanup(); process.exit(130); };
   process.on("SIGINT", onSignal);
   process.on("SIGTERM", onSignal);
 
@@ -334,11 +362,11 @@ through it for ~2x lower latency. Use --no-warm to bypass it for a one-off run.`
 
   try {
     if (quiet) {
-      const turn = await thread.run(prompt, { signal: ac.signal });
+      const turn = await thread.run(effectivePrompt, { signal: ac.signal });
       if (turn.finalResponse) console.log(turn.finalResponse);
       observer.finish({ status: "completed", transport: "sdk-quiet" });
     } else {
-      const { events } = await thread.runStreamed(prompt, { signal: ac.signal });
+      const { events } = await thread.runStreamed(effectivePrompt, { signal: ac.signal });
       for await (const event of events) {
         observer.onSdkEvent(event);
         renderEvent(event);
@@ -348,6 +376,7 @@ through it for ~2x lower latency. Use --no-warm to bypass it for a one-off run.`
   } finally {
     process.off("SIGINT", onSignal);
     process.off("SIGTERM", onSignal);
+    cleanupStdin();
     cleanup();
   }
 }

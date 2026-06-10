@@ -64,3 +64,11 @@ test("combined flags + prompt", () => {
   expect(r.effort).toBe("high");
   expect(r.prompt).toBe("open the PR");
 });
+
+import { stdinPromptSuffix } from "../lib/isolated.ts";
+
+test("stdinPromptSuffix points the imp at the temp file", () => {
+  const s = stdinPromptSuffix("/tmp/codex-imp-stdin-imp-jq-123");
+  expect(s).toContain("/tmp/codex-imp-stdin-imp-jq-123");
+  expect(s).toContain("piped");
+});

@@ -42,6 +42,7 @@ async function main(): Promise<void> {
       maxLessonsPerTurn: 3,
       maxLessonBytes: 24_000,
       maxCapturedOutputBytes: 1_200,
+      maxLessonAgeDays: 30,
       extraEnv: {},
     };
 
@@ -55,7 +56,7 @@ async function main(): Promise<void> {
     }
 
     const failures = scanTranscript(readFileSync(transcriptPath, "utf8"));
-    const written = resolved.mode === "lesson" ? recordLessons(lessonsPath, failures, resolved.maxLessonsPerTurn) : 0;
+    const written = resolved.mode === "lesson" ? recordLessons(lessonsPath, failures, resolved.maxLessonsPerTurn, resolved.maxCapturedOutputBytes, resolved.maxLessonAgeDays) : 0;
     writeSelfImproveReceipt(resolved, {
       event: input.hook_event_name,
       transcript_path: transcriptPath,

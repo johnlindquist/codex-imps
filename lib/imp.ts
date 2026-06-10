@@ -77,7 +77,14 @@ export function sourceFingerprint(config?: ImpConfig): string {
   return hash.digest("hex");
 }
 
-function readMeta(name: string): { pid?: number; fp?: string } | null {
+export interface ImpMeta {
+  pid?: number;
+  fp?: string;
+  startedAt?: number;
+  idleMinutes?: number;
+}
+
+export function readMeta(name: string): ImpMeta | null {
   try {
     return JSON.parse(readFileSync(metaPath(name), "utf8"));
   } catch {
@@ -105,6 +112,23 @@ export async function serveImp(config: ImpConfig): Promise<void> {
   const client = new AppServerClient(config);
   await client.start();
   console.error(`${config.name} warm imp ready at ${sock} (pid ${process.pid}, app-server warm)`);
+
+  // Idle shutdown: a warm imp nobody is talking to exits on its own, so the
+  // fleet doesn't accumulate resident app-server processes. The next call
+  // auto-respawns it (ensureWarmImp) — costs one warm-up, never a failure.
+  // CODEX_IMP_IDLE_MINUTES=0 disables; default 30.
+  const idleMinutes = Number(process.env.CODEX_IMP_IDLE_MINUTES ?? "30");
+  const idleMs = Number.isFinite(idleMinutes) && idleMinutes > 0 ? idleMinutes * 60_000 : 0;
+  let lastActivity = Date.now();
+  let activeTurns = 0;
+  if (idleMs > 0) {
+    setInterval(() => {
+      if (activeTurns === 0 && Date.now() - lastActivity > idleMs) {
+        console.error(`${config.name} warm imp idle for ${idleMinutes}m — shutting down`);
+        shutdown();
+      }
+    }, 30_000).unref?.();
+  }
 
   // Requests are serialized: one warm app-server, one turn at a time.
   let chain: Promise<void> = Promise.resolve();
@@ -145,6 +169,8 @@ export async function serveImp(config: ImpConfig): Promise<void> {
       }
       const prompt = req.prompt;
 
+      lastActivity = Date.now();
+      activeTurns++;
       chain = chain.then(async () => {
         try {
           const finalText = await client.runTurn(
@@ -161,6 +187,8 @@ export async function serveImp(config: ImpConfig): Promise<void> {
         } catch (e: any) {
           send({ type: "error", message: e.message || String(e) });
         } finally {
+          activeTurns--;
+          lastActivity = Date.now();
           socket.end();
         }
       });
@@ -173,7 +201,10 @@ export async function serveImp(config: ImpConfig): Promise<void> {
     // freshly-launched client can detect when the on-disk source has changed
     // and restart us. Written once the socket is accepting connections.
     try {
-      writeFileSync(metaPath(config.name), JSON.stringify({ pid: process.pid, fp: sourceFingerprint(config) }));
+      writeFileSync(
+        metaPath(config.name),
+        JSON.stringify({ pid: process.pid, fp: sourceFingerprint(config), startedAt: Date.now(), idleMinutes }),
+      );
     } catch {}
   });
 
@@ -201,7 +232,7 @@ export function clientAvailable(name: string): boolean {
 }
 
 /** Try to open the imp socket; resolves true only if a live listener accepts. */
-function tryConnect(sock: string, timeoutMs: number): Promise<boolean> {
+export function tryConnect(sock: string, timeoutMs: number): Promise<boolean> {
   return new Promise((resolve) => {
     const socket = createConnection(sock);
     const done = (ok: boolean) => { clearTimeout(timer); socket.destroy(); resolve(ok); };
@@ -231,7 +262,7 @@ function sendStop(sock: string): Promise<void> {
  * started by an older build with no meta file). Escalates to SIGKILL if needed,
  * then clears any stale socket/meta so a fresh imp can start clean.
  */
-async function stopWarmImp(name: string, pid?: number): Promise<void> {
+export async function stopWarmImp(name: string, pid?: number): Promise<void> {
   const sock = socketPath(name);
   if (pid) {
     try { process.kill(pid, "SIGTERM"); } catch {}
@@ -284,10 +315,14 @@ export async function ensureWarmImp(config: ImpConfig, readyTimeoutMs = 30000): 
 
   // Spawn a detached background imp: re-run THIS executable with --serve.
   // It cleans up any stale socket on start, then listens once the app-server is warm.
+  // cwd is pinned to HOME, NOT the caller's cwd: the server outlives the caller, and
+  // a deleted cwd (e.g. a temp dir) makes codex fail to load configuration on every
+  // later turn. Per-request cwd is passed explicitly with each prompt.
   try {
     const child = spawn(process.argv[0], [process.argv[1], "--serve"], {
       detached: true,
       stdio: "ignore",
+      cwd: process.env.HOME || "/",
     });
     child.unref();
   } catch {

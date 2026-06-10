@@ -9,6 +9,9 @@ import {
   classifyFailure,
   createSelfImproveObserver,
   isExpectedNonzero,
+  lessonFor,
+  parseLessons,
+  pruneExpiredLessons,
   recordLessons,
   redactSecrets,
   resolveSelfImprove,
@@ -113,6 +116,49 @@ test("capAtLessonBoundary cuts at a lesson marker, not mid-lesson", () => {
   expect(capped.length).toBeLessThanOrEqual(250);
   expect(capped.startsWith("<!-- selfimprove:")).toBe(true);
   expect(capAtLessonBoundary(body, body.length + 10)).toBe(body);
+});
+
+test("parseLessons extracts sig, date, category, command, evidence", () => {
+  const root = tmp();
+  const lessons = join(root, "p.lessons.md");
+  recordLessons(lessons, [
+    { kind: "nonzero-exit", path: "$", exit: 2, command: "tool --bad", message: "usage: tool [options]" },
+  ]);
+  const parsed = parseLessons(readFileSync(lessons, "utf8"));
+  expect(parsed.length).toBe(1);
+  expect(parsed[0].sig).toMatch(/^[0-9a-f]{16}$/);
+  expect(parsed[0].date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  expect(parsed[0].category).toBe("usage-error");
+  expect(parsed[0].command).toBe("tool --bad");
+  expect(parsed[0].evidence).toContain("usage: tool");
+});
+
+test("pruneExpiredLessons drops old and undated lessons, keeps fresh ones", () => {
+  const day = 86_400_000;
+  const now = Date.parse("2026-06-10T12:00:00Z");
+  const fresh = lessonFor({ kind: "nonzero-exit", path: "$", exit: 2, command: "fresh-cmd", message: "usage:" }, 1200, now - 5 * day);
+  const stale = lessonFor({ kind: "nonzero-exit", path: "$", exit: 2, command: "stale-cmd", message: "usage:" }, 1200, now - 90 * day);
+  const legacy = "\n<!-- selfimprove:aaaaaaaaaaaaaaaa -->\n- [generic] Command `legacy-cmd` exited 1. Old advice.\n";
+  const content = stale + legacy + fresh;
+
+  const pruned = pruneExpiredLessons(content, 30, now);
+  expect(pruned).toContain("fresh-cmd");
+  expect(pruned).not.toContain("stale-cmd");
+  expect(pruned).not.toContain("legacy-cmd");
+
+  // maxAgeDays 0 disables aging entirely.
+  expect(pruneExpiredLessons(content, 0, now)).toBe(content);
+});
+
+test("recordLessons prunes expired lessons when appending new ones", () => {
+  const root = tmp();
+  const lessons = join(root, "aging.lessons.md");
+  const now = Date.now();
+  writeFileSync(lessons, lessonFor({ kind: "nonzero-exit", path: "$", exit: 2, command: "ancient-cmd", message: "usage:" }, 1200, now - 90 * 86_400_000));
+  recordLessons(lessons, [{ kind: "nonzero-exit", path: "$", exit: 127, command: "new-cmd", message: "command not found" }]);
+  const body = readFileSync(lessons, "utf8");
+  expect(body).toContain("new-cmd");
+  expect(body).not.toContain("ancient-cmd");
 });
 
 test("recordLessons dedupes by signature across calls", () => {

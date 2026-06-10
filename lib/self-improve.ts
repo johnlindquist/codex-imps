@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync } from "fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { createHash } from "crypto";
 import type { ImpConfig } from "./isolated.ts";
@@ -18,6 +18,8 @@ export interface SelfImproveConfig {
   maxLessonBytes?: number;
   /** Maximum captured output bytes used when rendering lesson evidence. */
   maxCapturedOutputBytes?: number;
+  /** Lessons older than this many days are pruned when new lessons are appended. 0 disables aging. */
+  maxLessonAgeDays?: number;
   /** `receipt` records debug receipts without changing the prompt overlay. */
   mode?: "lesson" | "receipt";
 }
@@ -34,6 +36,7 @@ export interface ResolvedSelfImprove {
   maxLessonsPerTurn: number;
   maxLessonBytes: number;
   maxCapturedOutputBytes: number;
+  maxLessonAgeDays: number;
   extraEnv: Record<string, string>;
 }
 
@@ -93,6 +96,7 @@ export function resolveSelfImprove(
   const maxLessonsPerTurn = config.selfImprove?.maxLessonsPerTurn ?? 3;
   const maxLessonBytes = config.selfImprove?.maxLessonBytes ?? 24_000;
   const maxCapturedOutputBytes = config.selfImprove?.maxCapturedOutputBytes ?? 1_200;
+  const maxLessonAgeDays = config.selfImprove?.maxLessonAgeDays ?? 30;
 
   if (!enabled) {
     return {
@@ -105,6 +109,7 @@ export function resolveSelfImprove(
       maxLessonsPerTurn: 0,
       maxLessonBytes,
       maxCapturedOutputBytes,
+      maxLessonAgeDays: 0,
       extraEnv: {},
     };
   }
@@ -130,6 +135,7 @@ export function resolveSelfImprove(
     maxLessonsPerTurn,
     maxLessonBytes,
     maxCapturedOutputBytes,
+    maxLessonAgeDays,
     extraEnv,
   };
 }
@@ -363,8 +369,9 @@ export function signature(failure: Failure): string {
     .slice(0, 16);
 }
 
-export function lessonFor(failure: Failure, maxCapturedOutputBytes = 1_200): string {
-  const marker = `${LESSON_MARKER_PREFIX}${signature(failure)} -->`;
+export function lessonFor(failure: Failure, maxCapturedOutputBytes = 1_200, now = Date.now()): string {
+  const date = new Date(now).toISOString().slice(0, 10);
+  const marker = `${LESSON_MARKER_PREFIX}${signature(failure)} d=${date} -->`;
   const category = classifyFailure(failure);
   const subject = failure.command ? `Command \`${trunc(failure.command, 160)}\`` : "A tool call";
   const exit = failure.exit !== undefined ? ` exited ${failure.exit}` : " failed";
@@ -373,11 +380,68 @@ export function lessonFor(failure: Failure, maxCapturedOutputBytes = 1_200): str
   return ["", marker, `- [${category}] ${subject}${exit}${status}. ${CATEGORY_ADVICE[category]}${msg}`, ""].join("\n");
 }
 
-export function recordLessons(lessonsPath: string, failures: Failure[], max = 3, maxCapturedOutputBytes = 1_200): number {
+export interface ParsedLesson {
+  sig: string;
+  /** YYYY-MM-DD from the marker; undefined for legacy (pre-dating) lessons. */
+  date?: string;
+  category?: string;
+  command?: string;
+  evidence?: string;
+  /** Full lesson text including its marker line. */
+  block: string;
+}
+
+const LESSON_BLOCK_RE = /<!-- selfimprove:([0-9a-f]+)(?: d=(\d{4}-\d{2}-\d{2}))? -->\n([^]*?)(?=\n*<!-- selfimprove:|\s*$)/g;
+
+export function parseLessons(content: string): ParsedLesson[] {
+  const lessons: ParsedLesson[] = [];
+  for (const m of content.matchAll(LESSON_BLOCK_RE)) {
+    const body = m[3] ?? "";
+    lessons.push({
+      sig: m[1],
+      date: m[2],
+      category: body.match(/^- \[([a-z-]+)\]/m)?.[1],
+      command: body.match(/Command `([^`]*)`/)?.[1],
+      evidence: body.match(/ Evidence: (.*)$/m)?.[1],
+      block: m[0].trimEnd(),
+    });
+  }
+  return lessons;
+}
+
+/**
+ * Drop lessons older than maxAgeDays. Legacy lessons with no date in the marker
+ * are treated as expired — aging exists to clear stale guidance, and undated
+ * lessons predate this mechanism. maxAgeDays <= 0 disables pruning.
+ */
+export function pruneExpiredLessons(content: string, maxAgeDays = 30, now = Date.now()): string {
+  if (maxAgeDays <= 0 || !content.trim()) return content;
+  const lessons = parseLessons(content);
+  if (lessons.length === 0) return content;
+  const cutoff = now - maxAgeDays * 86_400_000;
+  const kept = lessons.filter((l) => l.date && Date.parse(l.date) >= cutoff);
+  if (kept.length === lessons.length) return content;
+  if (kept.length === 0) return "";
+  return kept.map((l) => `\n${l.block}\n`).join("");
+}
+
+export function recordLessons(
+  lessonsPath: string,
+  failures: Failure[],
+  max = 3,
+  maxCapturedOutputBytes = 1_200,
+  maxLessonAgeDays = 30,
+): number {
   const worthRecording = failures.filter((f) => !isExpectedNonzero(f));
   if (worthRecording.length === 0) return 0;
   mkdirSync(dirname(lessonsPath), { recursive: true });
-  const existing = existsSync(lessonsPath) ? readFileSync(lessonsPath, "utf8") : "";
+  let existing = existsSync(lessonsPath) ? readFileSync(lessonsPath, "utf8") : "";
+  // Age out stale lessons whenever we're about to append fresh ones.
+  const pruned = pruneExpiredLessons(existing, maxLessonAgeDays);
+  if (pruned !== existing) {
+    writeFileSync(lessonsPath, pruned, "utf8");
+    existing = pruned;
+  }
   let written = 0;
   const seen = new Set<string>();
   for (const failure of worthRecording) {
@@ -465,7 +529,13 @@ export function createSelfImproveObserver(config: ImpConfig): SelfImproveObserve
       try {
         const written =
           resolved.mode === "lesson" && resolved.lessonsPath
-            ? recordLessons(resolved.lessonsPath, failures, resolved.maxLessonsPerTurn, resolved.maxCapturedOutputBytes)
+            ? recordLessons(
+                resolved.lessonsPath,
+                failures,
+                resolved.maxLessonsPerTurn,
+                resolved.maxCapturedOutputBytes,
+                resolved.maxLessonAgeDays,
+              )
             : 0;
         writeSelfImproveReceipt(resolved, { failures: failures.length, lessons_written: written, ...extra });
         return written;
