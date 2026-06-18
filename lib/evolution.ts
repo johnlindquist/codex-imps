@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "fs";
 import { createHash } from "crypto";
 import { dirname, join } from "path";
 import { homedir } from "os";
@@ -42,6 +42,17 @@ export interface StabilizationSummary {
   signals: string[];
 }
 
+export interface EvolutionTrigger {
+  schema: 1;
+  imp: string;
+  created_at: string;
+  pending: number;
+  threshold: number;
+  evolution_file: string;
+  command: string;
+  reason: string;
+}
+
 export interface EvolutionJob {
   schema: 1;
   id: string;
@@ -83,6 +94,10 @@ export function statusFilePath(imp: string): string {
 
 export function stabilizationFilePath(imp: string): string {
   return join(impHome(), `${imp}.stabilizations.jsonl`);
+}
+
+export function evolutionTriggerPath(imp: string): string {
+  return join(impHome(), `${imp}.evolve-request.json`);
 }
 
 export function queueDir(): string {
@@ -137,6 +152,27 @@ export function pendingEvolutionCount(imp: string): number {
   return readEvolutionSuggestions(imp).filter((s) => s.state === "pending").length;
 }
 
+export function updateEvolutionSuggestionState(imp: string, ids: string[], state: EvolutionState): number {
+  const file = evolutionFilePath(imp);
+  const suggestions = readEvolutionSuggestions(imp);
+  if (suggestions.length === 0) return 0;
+  const all = ids.includes("all");
+  const idSet = new Set(ids);
+  let changed = 0;
+  const updated = suggestions.map((suggestion) => {
+    if (suggestion.state !== "pending") return suggestion;
+    if (!all && !idSet.has(suggestion.id)) return suggestion;
+    changed++;
+    return { ...suggestion, state };
+  });
+  if (changed === 0) return 0;
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, updated.map((suggestion) => JSON.stringify(suggestion)).join("\n") + "\n", "utf8");
+  writeEvolutionStatus(imp);
+  refreshEvolutionTrigger(imp);
+  return changed;
+}
+
 export function readStabilizations(imp: string): StabilizationSummary[] {
   const file = stabilizationFilePath(imp);
   if (!existsSync(file)) return [];
@@ -158,6 +194,7 @@ export function appendEvolutionSuggestion(suggestion: EvolutionSuggestion): bool
   mkdirSync(dirname(file), { recursive: true });
   appendFileSync(file, JSON.stringify(suggestion) + "\n", "utf8");
   writeEvolutionStatus(suggestion.imp);
+  refreshEvolutionTrigger(suggestion.imp);
   return true;
 }
 
@@ -447,13 +484,52 @@ export function writeEvolutionStatus(imp: string): void {
   writeFileSync(file, JSON.stringify(status, null, 2) + "\n", "utf8");
 }
 
+export function refreshEvolutionTrigger(imp: string, threshold = 3): EvolutionTrigger | undefined {
+  const pending = pendingEvolutionCount(imp);
+  const file = evolutionTriggerPath(imp);
+  if (pending < threshold) {
+    try { unlinkSync(file); } catch {}
+    return undefined;
+  }
+  let existing: EvolutionTrigger | undefined;
+  try {
+    existing = JSON.parse(readFileSync(file, "utf8"));
+  } catch {}
+  if (existing?.schema === 1 && existing.imp === imp && existing.pending === pending && existing.threshold === threshold) {
+    return existing;
+  }
+  const trigger: EvolutionTrigger = {
+    schema: 1,
+    imp,
+    created_at: new Date().toISOString(),
+    pending,
+    threshold,
+    evolution_file: evolutionFilePath(imp),
+    command: `imp evolve ${imp}`,
+    reason: `pending evolution suggestions reached automatic threshold (${pending}/${threshold})`,
+  };
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, JSON.stringify(trigger, null, 2) + "\n", "utf8");
+  return trigger;
+}
+
+export function readEvolutionTrigger(imp: string): EvolutionTrigger | undefined {
+  try {
+    const value = JSON.parse(readFileSync(evolutionTriggerPath(imp), "utf8"));
+    return value?.schema === 1 && value?.imp === imp ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function evolutionStatusLine(imp: string): string | undefined {
   const pending = pendingEvolutionCount(imp);
+  refreshEvolutionTrigger(imp);
   const status = readStatus(imp);
   const score = status?.average_score ?? 90;
   const stars = "★★★★★".slice(0, Math.max(1, Math.min(5, Math.round(score / 20))));
   if (pending === 0) return `${stars} | 🔁 0 evolutions pending`;
-  const suffix = pending >= 3 ? " — run: imps evolve " + imp : "";
+  const suffix = pending >= 3 ? " — auto-evolution ready: imp evolve " + imp : "";
   return `${stars} | 🔁 ${pending} evolution${pending === 1 ? "" : "s"} pending${suffix}`;
 }
 

@@ -129,6 +129,8 @@ imps stop imp-gh             # stop one warm imp (or: imps stop --all)
 imps evolve                  # which imps have pending evolution suggestions
 imps evolve imp-gh           # review one imp's pending suggestions
 imp evolve imp-gh            # same review command from the user-facing router
+imps evolve imp-gh --applied all
+imps evolve imp-gh --dismiss <id>
 imps doctor                  # env sanity checks + stale socket cleanup
 ```
 
@@ -171,6 +173,8 @@ Instead, each non-interactive invocation records a compact, redacted session log
 imps evolve                  # list imps with pending suggestions
 imps evolve imp-gh           # inspect pending suggestions for one imp
 imp evolve imp-gh            # same review command from the user-facing router
+imps evolve imp-gh --applied all
+imps evolve imp-gh --dismiss <id>
 ```
 
 When an imp has pending suggestions, its next run prints a terse stderr status line before the turn starts:
@@ -179,7 +183,7 @@ When an imp has pending suggestions, its next run prints a terse stderr status l
 🔁 2 evolutions pending
 ```
 
-The status line is deliberately stderr-only so stdout remains safe for pipes.
+At 3 pending suggestions the runtime writes `~/.imp/<imp-name>.evolve-request.json` and the status line changes to `auto-evolution ready`. That is the automatic trigger: it makes the review/apply step visible on the next run without silently rewriting the imp. After you make the prompt or code change, mark the reviewed suggestions with `--applied`; use `--dismiss` for noisy suggestions. The status line is deliberately stderr-only so stdout remains safe for pipes.
 
 **`--effort <none|minimal|low|medium|high|xhigh>`** overrides reasoning effort for a single prompt. Lower is faster, but verified caveat: **`none` breaks tool use** — with zero reasoning the model answers trivial prompts ("say hi") but never decides to run commands, so a real `gh` task returns empty. `low` (the default) is the floor that reliably executes tools. Use `none`/`minimal` only for pure text replies.
 

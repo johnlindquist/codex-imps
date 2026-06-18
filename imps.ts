@@ -12,7 +12,13 @@ import { existsSync, readdirSync, unlinkSync } from "fs";
 import { join } from "path";
 import { spawn, spawnSync } from "child_process";
 import { metaPath, readMeta, socketPath, stopWarmImp, tryConnect } from "./lib/imp.ts";
-import { evolutionFilePath, pendingEvolutionCount, readEvolutionSuggestions } from "./lib/evolution.ts";
+import {
+  evolutionFilePath,
+  pendingEvolutionCount,
+  readEvolutionSuggestions,
+  readEvolutionTrigger,
+  updateEvolutionSuggestionState,
+} from "./lib/evolution.ts";
 
 const IMPS_DIR = join(import.meta.dir, "imps");
 
@@ -77,7 +83,7 @@ async function cmdStop(target?: string): Promise<void> {
   if (stopped === 0) console.log(target === "--all" ? "no warm imps to stop" : `${target} is not warm`);
 }
 
-function cmdEvolve(name?: string): void {
+function cmdEvolve(name?: string, args: string[] = []): void {
   if (!name) {
     let any = false;
     for (const imp of roster()) {
@@ -91,17 +97,40 @@ function cmdEvolve(name?: string): void {
     return;
   }
 
+  const appliedIdx = args.findIndex((a) => a === "--applied" || a === "--apply");
+  const dismissIdx = args.findIndex((a) => a === "--dismiss" || a === "--dismissed");
+  if (appliedIdx >= 0 || dismissIdx >= 0) {
+    const idx = appliedIdx >= 0 ? appliedIdx : dismissIdx;
+    const state = appliedIdx >= 0 ? "applied" : "dismissed";
+    const ids = args.slice(idx + 1).filter((a) => !a.startsWith("--"));
+    if (ids.length === 0) {
+      console.error(`usage: imps evolve ${name} --${state === "applied" ? "applied" : "dismiss"} <id|all>`);
+      process.exit(1);
+    }
+    const changed = updateEvolutionSuggestionState(name, ids, state);
+    console.log(`${name}: marked ${changed} evolution suggestion${changed === 1 ? "" : "s"} ${state}`);
+    return;
+  }
+
   const suggestions = readEvolutionSuggestions(name).filter((s) => s.state === "pending");
   if (suggestions.length === 0) {
     console.log(`${name} has no pending evolutions (${evolutionFilePath(name)})`);
     return;
   }
+  const trigger = readEvolutionTrigger(name);
   console.log(`${name}: ${suggestions.length} pending evolution${suggestions.length === 1 ? "" : "s"} in ${evolutionFilePath(name)}\n`);
+  if (trigger) {
+    console.log(`  auto-trigger: ${trigger.reason}`);
+    console.log(`      review command: ${trigger.command}`);
+    console.log("");
+  }
   for (const s of suggestions) {
-    console.log(`  ${s.created_at}  score ${s.score}/${s.benchmark}  ${s.severity}`);
+    console.log(`  ${s.id}  ${s.created_at}  score ${s.score}/${s.benchmark}  ${s.severity}`);
     console.log(`      ${s.recommendation}`);
     if (s.evidence.length > 0) console.log(`      evidence: ${s.evidence[0]}`);
   }
+  console.log(`\nAfter making any prompt/code change, mark reviewed items: imps evolve ${name} --applied <id|all>`);
+  console.log(`To discard noise: imps evolve ${name} --dismiss <id|all>`);
 }
 
 async function cmdDoctor(): Promise<void> {
@@ -148,7 +177,7 @@ switch (cmd) {
     break;
   case "evolve":
   case "evolutions":
-    cmdEvolve(rest.find((a) => !a.startsWith("--")));
+    cmdEvolve(rest.find((a) => !a.startsWith("--")), rest);
     break;
   case "doctor":
     await cmdDoctor();
@@ -177,6 +206,8 @@ Usage:
   imps ps                        warm imps: pid, uptime, idle timeout
   imps stop <name>|--all         stop warm imp(s)
   imps evolve [name]             pending evolution suggestions
+  imps evolve <name> --applied all
+  imps evolve <name> --dismiss <id>
   imps doctor                    environment sanity checks
 
 A free-text prompt routes via the \`imp\` router: imps "what changed in git?"`);

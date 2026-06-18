@@ -9,12 +9,16 @@ import {
   evaluateTelemetry,
   evolutionFilePath,
   evolutionStatusLine,
+  evolutionTriggerPath,
+  refreshEvolutionTrigger,
   makeEvolutionSuggestion,
   pendingEvolutionCount,
   readEvolutionSuggestions,
+  readEvolutionTrigger,
   readStabilizations,
   redactSecrets,
   statusFilePath,
+  updateEvolutionSuggestionState,
   writeSessionLog,
   type EvolutionTelemetry,
 } from "../lib/evolution.ts";
@@ -129,6 +133,53 @@ test("enqueueEvolutionJob writes a durable queue file", () => {
   const job = enqueueEvolutionJob("imp-queue", "/tmp/session.jsonl", new Date("2026-06-18T12:00:00Z"));
   expect(job.id).toStartWith("job_");
   expect(readFileSync(join(root, "evolution-queue", `${job.id}.json`), "utf8")).toContain("/tmp/session.jsonl");
+});
+
+test("three pending suggestions create an automatic evolution trigger", () => {
+  for (let i = 0; i < 3; i++) {
+    const suggestion = makeEvolutionSuggestion({
+      imp: "imp-threshold",
+      prompt: `prompt ${i}`,
+      finalText: "",
+      status: "completed",
+      transport: "test",
+      now: new Date(`2026-06-18T12:0${i}:00Z`),
+    })!;
+    expect(appendEvolutionSuggestion(suggestion)).toBe(true);
+  }
+
+  const trigger = refreshEvolutionTrigger("imp-threshold");
+  expect(trigger?.pending).toBe(3);
+  expect(trigger?.command).toBe("imp evolve imp-threshold");
+  expect(readEvolutionTrigger("imp-threshold")?.reason).toContain("automatic threshold");
+  expect(readFileSync(evolutionTriggerPath("imp-threshold"), "utf8")).toContain("imp evolve imp-threshold");
+  expect(evolutionStatusLine("imp-threshold")).toContain("auto-evolution ready");
+});
+
+test("reviewed suggestions stop counting as pending", () => {
+  const first = makeEvolutionSuggestion({
+    imp: "imp-review",
+    prompt: "first",
+    finalText: "",
+    status: "completed",
+    transport: "test",
+    now: new Date("2026-06-18T12:00:00Z"),
+  })!;
+  const second = makeEvolutionSuggestion({
+    imp: "imp-review",
+    prompt: "second",
+    finalText: "",
+    status: "completed",
+    transport: "test",
+    now: new Date("2026-06-18T12:01:00Z"),
+  })!;
+  appendEvolutionSuggestion(first);
+  appendEvolutionSuggestion(second);
+
+  expect(updateEvolutionSuggestionState("imp-review", [first.id], "applied")).toBe(1);
+  expect(updateEvolutionSuggestionState("imp-review", ["all"], "dismissed")).toBe(1);
+  expect(pendingEvolutionCount("imp-review")).toBe(0);
+  expect(readEvolutionSuggestions("imp-review").map((s) => s.state)).toEqual(["applied", "dismissed"]);
 });
 
 test("suggestions are written under IMP_HOME", () => {
