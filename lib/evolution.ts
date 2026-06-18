@@ -1,7 +1,8 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
 import { createHash } from "crypto";
 import { dirname, join } from "path";
 import { homedir } from "os";
+import { spawn } from "child_process";
 
 export type EvolutionSeverity = "low" | "medium" | "high";
 export type EvolutionState = "pending" | "applied" | "dismissed";
@@ -26,6 +27,27 @@ export interface EvolutionSuggestion {
     rationale: string;
   };
   state: EvolutionState;
+}
+
+export interface StabilizationSummary {
+  schema: 1;
+  id: string;
+  imp: string;
+  thread_id?: string;
+  turn_id?: string;
+  event_log_path?: string;
+  created_at: string;
+  score: number;
+  summary: string;
+  signals: string[];
+}
+
+export interface EvolutionJob {
+  schema: 1;
+  id: string;
+  imp: string;
+  event_log_path: string;
+  created_at: string;
 }
 
 export interface EvolutionTelemetry {
@@ -59,6 +81,14 @@ export function statusFilePath(imp: string): string {
   return join(impHome(), `${imp}.status.json`);
 }
 
+export function stabilizationFilePath(imp: string): string {
+  return join(impHome(), `${imp}.stabilizations.jsonl`);
+}
+
+export function queueDir(): string {
+  return join(impHome(), "evolution-queue");
+}
+
 export function sessionLogPath(id: string): string {
   return join(impHome(), "sessions", `${id}.jsonl`);
 }
@@ -85,6 +115,10 @@ export function suggestionId(suggestion: Pick<EvolutionSuggestion, "imp" | "dedu
   return `evo_${stableHash([suggestion.imp, suggestion.dedupe_key, suggestion.created_at])}`;
 }
 
+export function stabilizationId(summary: Pick<StabilizationSummary, "imp" | "event_log_path" | "created_at">): string {
+  return `stab_${stableHash([summary.imp, summary.event_log_path, summary.created_at])}`;
+}
+
 export function readEvolutionSuggestions(imp: string): EvolutionSuggestion[] {
   const file = evolutionFilePath(imp);
   if (!existsSync(file)) return [];
@@ -103,6 +137,20 @@ export function pendingEvolutionCount(imp: string): number {
   return readEvolutionSuggestions(imp).filter((s) => s.state === "pending").length;
 }
 
+export function readStabilizations(imp: string): StabilizationSummary[] {
+  const file = stabilizationFilePath(imp);
+  if (!existsSync(file)) return [];
+  const out: StabilizationSummary[] = [];
+  for (const line of readFileSync(file, "utf8").split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    try {
+      const value = JSON.parse(line);
+      if (value?.schema === 1 && value?.imp === imp) out.push(value);
+    } catch {}
+  }
+  return out;
+}
+
 export function appendEvolutionSuggestion(suggestion: EvolutionSuggestion): boolean {
   const file = evolutionFilePath(suggestion.imp);
   const existing = readEvolutionSuggestions(suggestion.imp);
@@ -110,6 +158,16 @@ export function appendEvolutionSuggestion(suggestion: EvolutionSuggestion): bool
   mkdirSync(dirname(file), { recursive: true });
   appendFileSync(file, JSON.stringify(suggestion) + "\n", "utf8");
   writeEvolutionStatus(suggestion.imp);
+  return true;
+}
+
+export function appendStabilization(summary: StabilizationSummary): boolean {
+  const file = stabilizationFilePath(summary.imp);
+  const existing = readStabilizations(summary.imp);
+  if (existing.some((s) => s.event_log_path === summary.event_log_path)) return false;
+  mkdirSync(dirname(file), { recursive: true });
+  appendFileSync(file, JSON.stringify(summary) + "\n", "utf8");
+  writeEvolutionStatus(summary.imp);
   return true;
 }
 
@@ -176,6 +234,110 @@ export function makeEvolutionSuggestion(input: {
   };
   suggestion.id = suggestionId(suggestion);
   return suggestion;
+}
+
+export function makeStabilizationSummary(input: {
+  imp: string;
+  status: string;
+  finalText?: string;
+  threadId?: string;
+  turnId?: string;
+  eventLogPath?: string;
+  now?: Date;
+}): StabilizationSummary {
+  const created_at = (input.now || new Date()).toISOString();
+  const summary: StabilizationSummary = {
+    schema: 1,
+    id: "",
+    imp: input.imp,
+    thread_id: input.threadId,
+    turn_id: input.turnId,
+    event_log_path: input.eventLogPath,
+    created_at,
+    score: 90,
+    summary: "Session completed cleanly with a final assistant response.",
+    signals: ["completed", input.finalText?.trim() ? "final-response-present" : "final-response-missing"],
+  };
+  summary.id = stabilizationId(summary);
+  return summary;
+}
+
+export function readSessionTelemetry(eventLogPath: string): EvolutionTelemetry | undefined {
+  if (!existsSync(eventLogPath)) return undefined;
+  for (const line of readFileSync(eventLogPath, "utf8").split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    try {
+      const row = JSON.parse(line);
+      if (row?.type === "session") {
+        const { type: _type, ...telemetry } = row;
+        return telemetry;
+      }
+    } catch {}
+  }
+  return undefined;
+}
+
+export function evaluateTelemetry(telemetry: EvolutionTelemetry, eventLogPath: string, now = new Date()): EvolutionSuggestion | StabilizationSummary {
+  const suggestion = makeEvolutionSuggestion({
+    imp: telemetry.imp,
+    prompt: telemetry.prompt,
+    finalText: telemetry.finalText,
+    status: telemetry.status,
+    transport: telemetry.transport,
+    threadId: telemetry.threadId,
+    turnId: telemetry.turnId,
+    eventLogPath,
+    now,
+  });
+  if (suggestion) return suggestion;
+  return makeStabilizationSummary({
+    imp: telemetry.imp,
+    status: telemetry.status,
+    finalText: telemetry.finalText,
+    threadId: telemetry.threadId,
+    turnId: telemetry.turnId,
+    eventLogPath,
+    now,
+  });
+}
+
+export function recordEvaluation(result: EvolutionSuggestion | StabilizationSummary): boolean {
+  if ("recommendation" in result) return appendEvolutionSuggestion(result);
+  return appendStabilization(result);
+}
+
+export function enqueueEvolutionJob(imp: string, eventLogPath: string, now = new Date()): EvolutionJob {
+  const job: EvolutionJob = {
+    schema: 1,
+    id: `job_${stableHash([imp, eventLogPath, now.toISOString()])}`,
+    imp,
+    event_log_path: eventLogPath,
+    created_at: now.toISOString(),
+  };
+  const dir = queueDir();
+  mkdirSync(dir, { recursive: true });
+  const finalPath = join(dir, `${job.id}.json`);
+  const tmpPath = `${finalPath}.tmp-${process.pid}`;
+  writeFileSync(tmpPath, JSON.stringify(job, null, 2) + "\n", "utf8");
+  renameSync(tmpPath, finalPath);
+  return job;
+}
+
+export function spawnEvolutionEvaluator(job: EvolutionJob): void {
+  if (process.env.IMP_EVOLUTION_DISABLED === "1" || process.env.IMP_EVOLUTION_INLINE === "1") return;
+  const entry = new URL("./evolution-evaluator.ts", import.meta.url).pathname;
+  try {
+    const child = spawn(process.argv[0] || "bun", [entry, join(queueDir(), `${job.id}.json`)], {
+      detached: true,
+      stdio: "ignore",
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        IMP_EVOLUTION_DISABLED: "1",
+      },
+    });
+    child.unref();
+  } catch {}
 }
 
 function compactEvent(event: unknown): unknown {
@@ -251,19 +413,12 @@ export function createEvolutionObserver(config: { name: string }, prompt: string
           events,
         };
         const eventLogPath = writeSessionLog(telemetry);
-        const suggestion = makeEvolutionSuggestion({
-          imp: config.name,
-          prompt,
-          finalText: effectiveFinalText,
-          status: extra.status,
-          transport: extra.transport,
-          threadId: telemetry.threadId,
-          turnId: telemetry.turnId,
-          eventLogPath,
-          now: completedAt,
-        });
-        if (suggestion) appendEvolutionSuggestion(suggestion);
-        else writeEvolutionStatus(config.name);
+        const job = enqueueEvolutionJob(config.name, eventLogPath, completedAt);
+        if (process.env.IMP_EVOLUTION_INLINE === "1") {
+          recordEvaluation(evaluateTelemetry(telemetry, eventLogPath, completedAt));
+        } else {
+          spawnEvolutionEvaluator(job);
+        }
       } catch {}
     },
   };
@@ -271,13 +426,21 @@ export function createEvolutionObserver(config: { name: string }, prompt: string
 
 export function writeEvolutionStatus(imp: string): void {
   const suggestions = readEvolutionSuggestions(imp);
+  const stabilizations = readStabilizations(imp);
   const pending = suggestions.filter((s) => s.state === "pending");
+  const scores = [
+    ...suggestions.map((s) => s.score),
+    ...stabilizations.map((s) => s.score),
+  ].slice(-20);
+  const avg = scores.length ? Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length) : 90;
   const status = {
     schema: 1,
     imp,
     updated_at: new Date().toISOString(),
     pending: pending.length,
     high_severity_pending: pending.filter((s) => s.severity === "high").length,
+    average_score: avg,
+    stabilizations: stabilizations.length,
   };
   const file = statusFilePath(imp);
   mkdirSync(dirname(file), { recursive: true });
@@ -286,6 +449,18 @@ export function writeEvolutionStatus(imp: string): void {
 
 export function evolutionStatusLine(imp: string): string | undefined {
   const pending = pendingEvolutionCount(imp);
-  if (pending === 0) return undefined;
-  return `🔁 ${pending} evolution${pending === 1 ? "" : "s"} pending`;
+  const status = readStatus(imp);
+  const score = status?.average_score ?? 90;
+  const stars = "★★★★★".slice(0, Math.max(1, Math.min(5, Math.round(score / 20))));
+  if (pending === 0) return `${stars} | 🔁 0 evolutions pending`;
+  const suffix = pending >= 3 ? " — run: imps evolve " + imp : "";
+  return `${stars} | 🔁 ${pending} evolution${pending === 1 ? "" : "s"} pending${suffix}`;
+}
+
+function readStatus(imp: string): { average_score?: number } | undefined {
+  try {
+    return JSON.parse(readFileSync(statusFilePath(imp), "utf8"));
+  } catch {
+    return undefined;
+  }
 }

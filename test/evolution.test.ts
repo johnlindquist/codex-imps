@@ -4,11 +4,15 @@ import { tmpdir } from "os";
 import { join } from "path";
 import {
   appendEvolutionSuggestion,
+  appendStabilization,
+  enqueueEvolutionJob,
+  evaluateTelemetry,
   evolutionFilePath,
   evolutionStatusLine,
   makeEvolutionSuggestion,
   pendingEvolutionCount,
   readEvolutionSuggestions,
+  readStabilizations,
   redactSecrets,
   statusFilePath,
   writeSessionLog,
@@ -54,7 +58,7 @@ test("empty final answer creates a pending suggestion", () => {
   expect(suggestion!.recommendation).toContain("final result");
   expect(appendEvolutionSuggestion(suggestion!)).toBe(true);
   expect(pendingEvolutionCount("imp-test")).toBe(1);
-  expect(evolutionStatusLine("imp-test")).toBe("🔁 1 evolution pending");
+  expect(evolutionStatusLine("imp-test")).toContain("🔁 1 evolution pending");
   expect(existsSync(statusFilePath("imp-test"))).toBe(true);
 });
 
@@ -98,6 +102,33 @@ test("redacts common secrets before persistence", () => {
   const body = readFileSync(file, "utf8");
   expect(body).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz");
   expect(body).not.toContain("AWS_SECRET_ACCESS_KEY=abcdef");
+});
+
+test("clean telemetry records a stabilization summary", () => {
+  const telemetry: EvolutionTelemetry = {
+    imp: "imp-stable",
+    prompt: "say hi",
+    finalText: "hi",
+    threadId: "thread-stable",
+    turnId: "turn-stable",
+    transport: "test",
+    status: "completed",
+    startedAt: "2026-06-18T12:00:00Z",
+    completedAt: "2026-06-18T12:00:01Z",
+    events: [],
+  };
+  const file = writeSessionLog(telemetry);
+  const result = evaluateTelemetry(telemetry, file, new Date("2026-06-18T12:00:02Z"));
+  expect("summary" in result).toBe(true);
+  expect(appendStabilization(result as any)).toBe(true);
+  expect(readStabilizations("imp-stable").length).toBe(1);
+  expect(evolutionStatusLine("imp-stable")).toContain("★★★★★");
+});
+
+test("enqueueEvolutionJob writes a durable queue file", () => {
+  const job = enqueueEvolutionJob("imp-queue", "/tmp/session.jsonl", new Date("2026-06-18T12:00:00Z"));
+  expect(job.id).toStartWith("job_");
+  expect(readFileSync(join(root, "evolution-queue", `${job.id}.json`), "utf8")).toContain("/tmp/session.jsonl");
 });
 
 test("suggestions are written under IMP_HOME", () => {
