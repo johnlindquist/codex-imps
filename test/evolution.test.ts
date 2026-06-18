@@ -100,12 +100,13 @@ test("redacts common secrets before persistence", () => {
     status: "completed",
     startedAt: "2026-06-18T12:00:00Z",
     completedAt: "2026-06-18T12:00:01Z",
-    events: [],
+    events: [{ headers: { Authorization: "Bearer sk-abcdefghijklmnopqrstuvwxyz123456" } }],
   };
   const file = writeSessionLog(telemetry);
   const body = readFileSync(file, "utf8");
   expect(body).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz");
   expect(body).not.toContain("AWS_SECRET_ACCESS_KEY=abcdef");
+  expect(body).not.toContain("sk-abcdefghijklmnopqrstuvwxyz123456");
 });
 
 test("clean telemetry records a stabilization summary", () => {

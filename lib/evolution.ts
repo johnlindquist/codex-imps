@@ -212,9 +212,16 @@ export function writeSessionLog(telemetry: EvolutionTelemetry): string {
   const id = telemetry.threadId || telemetry.turnId || stableHash([telemetry.imp, telemetry.startedAt, telemetry.prompt]);
   const file = sessionLogPath(id);
   mkdirSync(dirname(file), { recursive: true });
+  const events = telemetry.events.map(compactEvent);
   const rows = [
-    { type: "session", ...telemetry, prompt: redactSecrets(telemetry.prompt), finalText: redactSecrets(telemetry.finalText || "") },
-    ...telemetry.events.map((event) => ({ type: "event", event })),
+    {
+      type: "session",
+      ...telemetry,
+      prompt: redactSecrets(telemetry.prompt),
+      finalText: redactSecrets(telemetry.finalText || ""),
+      events,
+    },
+    ...events.map((event) => ({ type: "event", event })),
   ];
   writeFileSync(file, rows.map((row) => JSON.stringify(row)).join("\n") + "\n", "utf8");
   return file;
@@ -379,8 +386,15 @@ export function spawnEvolutionEvaluator(job: EvolutionJob): void {
 
 function compactEvent(event: unknown): unknown {
   const json = JSON.stringify(event);
-  if (json.length <= 4_000) return event;
-  return { truncated: true, preview: redactSecrets(json.slice(0, 4_000)) };
+  const redacted = redactSecrets(json);
+  if (redacted.length <= 4_000) {
+    try {
+      return JSON.parse(redacted);
+    } catch {
+      return redacted;
+    }
+  }
+  return { truncated: true, preview: redacted.slice(0, 4_000) };
 }
 
 export function createEvolutionObserver(config: { name: string }, prompt: string): EvolutionObserver {
