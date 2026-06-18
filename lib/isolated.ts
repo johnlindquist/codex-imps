@@ -9,12 +9,8 @@ import { Codex, type CodexOptions, type ThreadOptions } from "@openai/codex-sdk"
 import { rmSync, unlinkSync, writeFileSync } from "fs";
 import { spawn } from "child_process";
 import { ensureWarmImp, runViaWarmImp, serveImp } from "./imp.ts";
-import {
-  applyLessonOverlay,
-  prepareIsolatedCodexHome,
-  type SelfImproveConfig,
-} from "./codex-runtime.ts";
-import { createSelfImproveObserver } from "./self-improve.ts";
+import { prepareIsolatedCodexHome } from "./codex-runtime.ts";
+import { createEvolutionObserver, evolutionStatusLine } from "./evolution.ts";
 
 export interface ImpConfig {
   name: string;
@@ -24,15 +20,13 @@ export interface ImpConfig {
   developerInstructions: string;
   sandboxMode?: "read-only" | "workspace-write" | "danger-full-access";
   extraEnv?: Record<string, string>;
-  /** Opt in to the Stop-hook self-improvement loop (see lib/codex-runtime.ts). */
-  selfImprove?: SelfImproveConfig;
 }
 
 export function createIsolatedCodex(rawConfig: ImpConfig) {
-  const config = applyLessonOverlay(rawConfig);
+  const config = rawConfig;
   const realHome = process.env.HOME!;
   const isolatedHome = `/tmp/codex-imp-${config.name}-${process.pid}`;
-  // Symlinks auth, and (when self-improvement is enabled) writes the hook config.
+  // Symlinks auth into the throwaway Codex home.
   const runtime = prepareIsolatedCodexHome(config, isolatedHome, realHome);
 
   const model = config.model || process.env.CODEX_IMP_MODEL || process.env.CODEX_PROFILE_MODEL || "gpt-5.3-codex-spark";
@@ -220,13 +214,13 @@ function renderEvent(event: any) {
 }
 
 export async function runImp(rawConfig: ImpConfig) {
-  // Fold any accumulated self-improvement lessons into developerInstructions
-  // before anything reads them (interactive + cold paths). Idempotent.
-  const config = applyLessonOverlay(rawConfig);
+  const config = rawConfig;
   const { interactive, quiet, help, serve, noWarm, effort, prompt, noArgs } = parseArgs(process.argv);
 
   if (help || noArgs) {
-    console.log(`${config.name} — isolated codex imp (spark)
+    const displayModel = config.model || process.env.CODEX_IMP_MODEL || process.env.CODEX_PROFILE_MODEL || "gpt-5.3-codex-spark";
+    const displayEffort = config.reasoningEffort || "low";
+    console.log(`${config.name} — isolated codex imp (${displayModel}, ${displayEffort} effort)
 
 Usage:
   ${config.name} <prompt>            Run with streaming (auto-warms the imp for instant responses)
@@ -246,6 +240,9 @@ through it for ~2x lower latency. Use --no-warm to bypass it for a one-off run.`
     await serveImp(config);
     return;
   }
+
+  const statusLine = evolutionStatusLine(config.name);
+  if (statusLine) process.stderr.write(`${statusLine}\n`);
 
   if (interactive) {
     // Launch the codex interactive TUI right here in the current terminal.
@@ -358,13 +355,13 @@ through it for ~2x lower latency. Use --no-warm to bypass it for a one-off run.`
   process.on("SIGTERM", onSignal);
 
   const thread = startThread();
-  const observer = createSelfImproveObserver(config);
+  const observer = createEvolutionObserver(config, effectivePrompt);
 
   try {
     if (quiet) {
       const turn = await thread.run(effectivePrompt, { signal: ac.signal });
       if (turn.finalResponse) console.log(turn.finalResponse);
-      observer.finish({ status: "completed", transport: "sdk-quiet" });
+      observer.finish({ status: "completed", transport: "sdk-quiet", finalText: turn.finalResponse });
     } else {
       const { events } = await thread.runStreamed(effectivePrompt, { signal: ac.signal });
       for await (const event of events) {
@@ -373,6 +370,9 @@ through it for ~2x lower latency. Use --no-warm to bypass it for a one-off run.`
       }
       observer.finish({ status: "completed", transport: "sdk-stream" });
     }
+  } catch (error) {
+    observer.finish({ status: ac.signal.aborted ? "interrupted" : "failed", transport: quiet ? "sdk-quiet" : "sdk-stream" });
+    throw error;
   } finally {
     process.off("SIGINT", onSignal);
     process.off("SIGTERM", onSignal);

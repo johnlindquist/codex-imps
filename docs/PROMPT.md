@@ -97,7 +97,7 @@ Please generate the complete imp file with:
 - **Operating rule is critical**: "Run TOOL via exec_command before any final answer" prevents text-only responses
 - **Keep rules strict**: The agent should refuse to do anything outside the tool's scope
 - **Extra env vars**: If your tool needs specific env vars (API keys, config paths), pass them via `extraEnv`
-- **Self-improvement is runtime-owned**: Do not paste learning logic into `developerInstructions`. Imps self-improve by default; use `selfImprove: { enabled: false }` only for an imp that must opt out. The shared runtime owns lesson capture, dedupe, overlay loading, and hot reload.
+- **Evolution is review-owned**: Do not paste learning logic into `developerInstructions`. The runtime records reviewable evolution suggestions outside the prompt; prompt changes should be made intentionally and verified.
 
 ## After generating
 

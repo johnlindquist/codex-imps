@@ -45,32 +45,6 @@ test("editing a lib file changes the fingerprint", () => {
   expect(sourceFingerprint(cfg())).not.toBe(before);
 });
 
-test("editing an active self-improvement lessons overlay changes the fingerprint", () => {
-  // The shared self-improvement runtime appends to `<exe>.lessons.md`; the next prompt must hot-reload.
-  const lessons = `${exe}.lessons.md`;
-  const active = cfg({ selfImprove: { enabled: true, lessonsPath: lessons } });
-  const before = sourceFingerprint(active);
-  writeFileSync(lessons, "- learned: read stderr before retrying\n");
-  expect(sourceFingerprint(active)).not.toBe(before);
-});
-
-test("editing a disabled self-improvement lessons sidecar does not change the fingerprint", () => {
-  const lessons = `${exe}.lessons.md`;
-  const disabled = cfg({ selfImprove: { enabled: false } });
-  const before = sourceFingerprint(disabled);
-  writeFileSync(lessons, "- ignored while disabled\n");
-  expect(sourceFingerprint(disabled)).toBe(before);
-});
-
-test("editing the debug receipt log does not change the fingerprint", () => {
-  const lessons = `${exe}.lessons.md`;
-  const active = cfg({ selfImprove: { enabled: true, lessonsPath: lessons } });
-  writeFileSync(lessons, "- stable lesson\n");
-  const before = sourceFingerprint(active);
-  writeFileSync(`${lessons}.debug.jsonl`, '{"event":"debug"}\n');
-  expect(sourceFingerprint(active)).toBe(before);
-});
-
 test("meta and socket paths are namespaced per profile", () => {
   expect(metaPath("imp-x")).toContain("imp-x");
   expect(metaPath("imp-x")).not.toBe(socketPath("imp-x"));

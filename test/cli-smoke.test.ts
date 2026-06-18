@@ -4,8 +4,7 @@ import { readdirSync, rmSync } from "fs";
 import { join } from "path";
 
 const ROOT = join(import.meta.dir, "..");
-// Profile executables are extensionless `imp-*` files; skip sidecars like
-// `imp-selfimprove.lessons.md` / `.debug.jsonl` that a self-improving imp writes.
+// Profile executables are extensionless `imp-*` files.
 const PROFILES = readdirSync(join(ROOT, "imps")).filter((f) => /^imp-[a-z0-9-]+$/.test(f));
 
 function run(args: string[], opts: { killAfterMs?: number } = {}): Promise<{ code: number | null; out: string; killed: boolean }> {

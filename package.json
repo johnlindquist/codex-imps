@@ -25,7 +25,6 @@
     "imp-bird": "./imps/imp-bird",
     "imp-browser": "./imps/imp-browser",
     "imp-browser-automate": "./imps/imp-browser-automate",
-    "imp-selfimprove": "./imps/imp-selfimprove",
     "imp-minimal": "./imps/imp-minimal",
     "imp-ffmpeg": "./imps/imp-ffmpeg",
     "imp-imagemagick": "./imps/imp-imagemagick",

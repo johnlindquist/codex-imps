@@ -24,7 +24,6 @@ import { createHash } from "crypto";
 import { spawn } from "child_process";
 import type { ImpConfig } from "./isolated.ts";
 import { AppServerClient } from "./appserver.ts";
-import { selfImproveFingerprintParts } from "./self-improve.ts";
 
 export function socketPath(name: string): string {
   return `/tmp/codex-imp-${name}.sock`;
@@ -60,11 +59,7 @@ export function sourceFingerprint(config?: ImpConfig): string {
     }
   } catch {}
   const hash = createHash("sha256");
-  for (const part of config ? selfImproveFingerprintParts(config) : []) {
-    hash.update(part);
-    hash.update("\0");
-    if (part.startsWith("path:")) files.push(part.slice("path:".length));
-  }
+  void config;
   files.sort();
   for (const f of files) {
     try {

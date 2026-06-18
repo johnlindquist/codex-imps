@@ -17,8 +17,8 @@
 import { spawn, type ChildProcess } from "child_process";
 import { rmSync } from "fs";
 import type { ImpConfig } from "./isolated.ts";
-import { applyLessonOverlay, prepareIsolatedCodexHome } from "./codex-runtime.ts";
-import { createSelfImproveObserver } from "./self-improve.ts";
+import { prepareIsolatedCodexHome } from "./codex-runtime.ts";
+import { createEvolutionObserver } from "./evolution.ts";
 
 export interface TurnHandlers {
   /** Raw app-server notification (method + params). */
@@ -38,9 +38,7 @@ export class AppServerClient {
   private hooksEnabled = false;
 
   constructor(config: ImpConfig) {
-    // Fold accumulated self-improvement lessons into developerInstructions once,
-    // at imp start. Hot-reload restarts this imp when the overlay changes.
-    this.config = applyLessonOverlay(config);
+    this.config = config;
     this.model = this.config.model || process.env.CODEX_IMP_MODEL || process.env.CODEX_PROFILE_MODEL || "gpt-5.3-codex-spark";
     this.isolatedHome = `/tmp/codex-appserver-${this.config.name}-${process.pid}`;
   }
@@ -48,7 +46,7 @@ export class AppServerClient {
   /** Spawn the app-server and complete the initialize handshake. */
   async start(): Promise<void> {
     const realHome = process.env.HOME!;
-    // Symlinks auth, and (when self-improvement is enabled) writes the hook config.
+    // Symlinks auth into the throwaway Codex home.
     const runtime = prepareIsolatedCodexHome(this.config, this.isolatedHome, realHome);
     this.hooksEnabled = runtime.hooksEnabled;
 
@@ -173,19 +171,19 @@ export class AppServerClient {
   async runTurn(prompt: string, handlers: TurnHandlers, opts?: { cwd?: string; effort?: string }): Promise<string> {
     if (!this.ready) throw new Error("app-server not ready");
     const threadId = await this.startThread();
-    const observer = createSelfImproveObserver(this.config);
+    const observer = createEvolutionObserver(this.config, prompt);
 
     return new Promise<string>((resolve, reject) => {
       let finalText = "";
       const t = setTimeout(() => {
         this.handlers.delete(h);
-        observer.finish({ status: "timeout", transport: "app-server" });
+        observer.finish({ status: "timeout", transport: "app-server", finalText, threadId });
         reject(new Error(`turn timeout\nstderr:\n${this.stderrTail}`));
       }, 120000);
       const h = (msg: any) => {
         if (msg.__exit !== undefined) {
           clearTimeout(t); this.handlers.delete(h);
-          observer.finish({ status: "app-server-exit", transport: "app-server", code: msg.__exit });
+          observer.finish({ status: "app-server-exit", transport: "app-server", finalText, threadId });
           reject(new Error(`app-server exited mid-turn (code ${msg.__exit})\nstderr:\n${this.stderrTail}`));
           return;
         }
@@ -199,7 +197,14 @@ export class AppServerClient {
           if (msg.params.item.text) finalText = msg.params.item.text;
         } else if (msg.method === "turn/completed") {
           clearTimeout(t); this.handlers.delete(h);
-          observer.finish({ status: "completed", transport: "app-server" });
+          const turn = msg.params?.turn;
+          observer.finish({
+            status: typeof turn?.status === "string" ? turn.status : "completed",
+            transport: "app-server",
+            finalText,
+            threadId,
+            turnId: turn?.id,
+          });
           resolve(finalText);
         }
       };

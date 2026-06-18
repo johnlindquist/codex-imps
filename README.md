@@ -64,7 +64,6 @@ bun imps/imp-gh "list my open PRs"
 | `imp-yt-dlp` | [yt-dlp](https://github.com/yt-dlp/yt-dlp) | Video downloads: formats, audio-only, subtitles, playlists (guarded bulk) |
 | `imp-osascript` | osascript | macOS automation: apps, notifications, dialogs, clipboard, Finder (guarded UI control) |
 | `imp-brew` | [brew](https://brew.sh) | Homebrew: search, info, outdated, deps (guarded install/upgrade/cleanup) |
-| `imp-selfimprove` | — | **Experimental** self-improving imp — learns from its own failed commands |
 | `imp-minimal` | — | Bare template for building your own |
 
 Local-only imps run sandboxed to match their promises: `imp-rg` is `read-only`; `imp-jq`, `imp-packx`, `imp-ffmpeg`, and `imp-imagemagick` are `workspace-write`. The sandbox enforces what the prompt claims.
@@ -124,13 +123,11 @@ A bare `and` never splits ("open a pane and cd into it" is one cmux task), conse
 ### Manage the fleet: `imps`
 
 ```bash
-imps list                    # roster: every imp, warm status, lesson count
+imps list                    # roster: every imp, warm status, evolution count
 imps ps                      # warm imps: pid, uptime, idle timeout
 imps stop imp-gh             # stop one warm imp (or: imps stop --all)
-imps lessons                 # which imps have learned lessons
-imps lessons imp-gh          # one imp's lessons: date, category, command
-imps lessons imp-gh --promote  # paste-ready Error-recovery candidates
-imps lessons imp-gh --prune    # age out old lessons now
+imps evolve                  # which imps have pending evolution suggestions
+imps evolve imp-gh           # review one imp's pending suggestions
 imps doctor                  # env sanity checks + stale socket cleanup
 ```
 
@@ -163,31 +160,24 @@ The auto-started warm imp is detached and persists after the call returns, so it
 
 **Edits hot-reload automatically.** A warm imp holds your imp's code in memory, so editing it would normally have no effect until you killed the process by hand. Instead, every call fingerprints the imp's source — the executable (its instructions, model, env) plus every `lib/*.ts` module it loads — and compares it to what the running warm imp was started with. If anything changed, the stale process is stopped and a fresh one is spawned **before** your prompt runs. So you can tweak an imp's internal prompt, swap the model, or change shared lib code and the **very next prompt respects the change** — no manual restart, no flag.
 
-### 🧪 Experimental: a self-improving imp (`imp-selfimprove`)
+### Evolution suggestions
 
-> **Status: experimental.** It is **on by default for every imp** through the shared runtime. Treat it as a research feature: an imp that rewrites its own prompt is inherently unpredictable, so don't point it at anything you can't afford to have it nudge over time. See the caveats below before relying on it.
+Imps no longer rewrite their own prompts from command failures. A failed command is usually a Codex/runtime/tooling issue, not proof that the imp should mutate itself.
 
-The shared runtime includes self-improvement support for every imp. Opt out with `selfImprove: { enabled: false }` on an imp. When a turn ends, the runtime scans failed command executions (non-zero exits), classifies each failure (`command-not-found`, `usage-error`, `missing-path`, `permission-denied`, `timeout`, `connection-error`), and appends a categorized **lesson** with corrective advice to an `imps/<name>.lessons.md` overlay file. Expected non-failures (a `rg`/`grep`/`test` exiting 1 on "no match") are filtered out so the imp doesn't learn noise. On startup the imp folds the overlay into its `developerInstructions`, and the active lessons file is part of the hot-reload fingerprint — so the **next prompt restarts the warm imp with the new lesson baked into its own prompt**. Over time it accumulates operating guidance shaped by what actually went wrong.
+Instead, each non-interactive invocation records a compact, redacted session log under `~/.imp/sessions/`. If the wrapper sees a bad session boundary, such as a timeout, interrupted/failed turn, or no final answer, it appends a reviewable suggestion to `~/.imp/<imp-name>.evolutions.jsonl`. Suggestions are transparent and inert until reviewed:
 
 ```bash
-imp-selfimprove "run a command that doesn't exist"   # turn 1: fails, records a lesson
-cat imps/imp-selfimprove.lessons.md                  # see what it learned
-imp-selfimprove "what have you learned so far?"      # turn 2: restarted, lesson now in its instructions
+imps evolve                  # list imps with pending suggestions
+imps evolve imp-gh           # inspect pending suggestions for one imp
 ```
 
-How it knows itself: self-improving imps receive `CODEX_IMP_SELF_PATH`, `CODEX_IMP_LIB_DIR`, and `CODEX_IMP_LESSONS_PATH` in the spawned Codex environment. Opted-out imps receive none of that self-improvement env. Lessons are deduped by a content signature (stable parts only, so volatile output doesn't defeat dedup), common secrets are redacted before rendering, and the writer fails open — a broken self-improvement step never breaks your turn.
+When an imp has pending suggestions, its next run prints a terse stderr status line before the turn starts:
 
-**Lessons have a lifecycle.** Each lesson carries its date; lessons older than 30 days (configurable via `selfImprove.maxLessonAgeDays`) are pruned automatically whenever new lessons are appended, so stale guidance ages out instead of accumulating forever. Inspect with `imps lessons <name>`, prune on demand with `--prune`, and **graduate** a proven lesson into the imp's permanent `## Error recovery` section with `--promote` (it prints paste-ready lines).
+```text
+🔁 2 evolutions pending
+```
 
-**Why it's experimental (and the sharp edges):**
-
-- **It edits its own prompt.** Each failed turn changes what the imp will be told next time. Behavior drifts as lessons accumulate, and a bad lesson can make it *worse*. There's no automatic rollback-on-regression yet — if it goes sideways, reset it: `rm imps/imp-selfimprove.lessons.md`.
-- **Lessons can grow.** The runtime caps how many overlay bytes are loaded into the prompt (cutting at lesson boundaries, never mid-lesson), but the local lessons file can still accumulate over time. Prune the file periodically.
-- **Failure detection is a heuristic** — it flags non-zero command exits (and `error`/`failed` markers), not genuine "mistakes." Known query commands that legitimately exit 1 are filtered, but other intentional non-zero exits can still generate a lesson.
-- **It works via a shared runtime-side trigger, not Codex's hooks.** The intended design was a Codex `Stop` lifecycle hook, but the shipped Codex CLI (verified on 0.134/0.135) does **not** execute user-config hooks for non-interactive `exec`/`app-server` turns. So detection runs off the turn stream instead; optional `stopHook: true` wiring is kept only as forward-compat for builds that do run user hooks. This is the main reason it's labeled experimental rather than stable.
-- **Lessons files are git-ignored** (`imps/*.lessons.md`) — an imp's learned state is local to your machine, not shared or versioned.
-
-To try it safely, run it in a throwaway repo, watch `imps/imp-selfimprove.lessons.md`, and delete that file whenever you want a clean slate.
+The status line is deliberately stderr-only so stdout remains safe for pipes.
 
 **`--effort <none|minimal|low|medium|high|xhigh>`** overrides reasoning effort for a single prompt. Lower is faster, but verified caveat: **`none` breaks tool use** — with zero reasoning the model answers trivial prompts ("say hi") but never decides to run commands, so a real `gh` task returns empty. `low` (the default) is the floor that reliably executes tools. Use `none`/`minimal` only for pure text replies.
 

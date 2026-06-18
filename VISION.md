@@ -20,11 +20,11 @@ than overwrite your source file. The expertise doesn't come from a big model;
 it comes from a prompt so well-built that a small, cheap, fast model can't
 help but get it right.
 
-And the imps get better while you sleep. Every command that fails becomes a
-lesson. Lessons that keep earning their place graduate into the imp's
-permanent error-recovery reflexes; lessons that stop mattering age out. An
-imp you've used for a month is measurably better than the day you summoned
-it — and the evals prove it, because trust is measured, never assumed.
+And the imps get better through reviewable evidence. Each invocation can leave
+behind a compact quality trace; sessions that end badly become evolution
+suggestions the user can inspect before changing an imp. An imp you've used for
+a month is measurably better than the day you summoned it — and the evals prove
+it, because trust is measured, never assumed.
 
 ## The creed
 
@@ -36,9 +36,9 @@ it — and the evals prove it, because trust is measured, never assumed.
 3. **Mischief, never malice.** Imps are playful but incapable of harm by
    default: read before write, preview before commit, never overwrite an
    input, least privilege always. The guarded path is the easy path.
-4. **Every failure is tuition.** A failed command is not an error to hide; it
-   is the raw material of the next, better imp. No mistake should survive
-   being made twice.
+4. **Every rough edge is evidence.** A bad session is not an error to hide; it
+   is input for a reviewable evolution suggestion. No behavior change ships
+   just because a command failed.
 5. **Trust is measured.** If a guardrail isn't covered by an eval, it's a
    wish, not a guarantee. Behavior changes only ship with proof.
 6. **The fleet is invisible.** Warm when you need them, gone when you don't.
@@ -51,7 +51,7 @@ it — and the evals prove it, because trust is measured, never assumed.
 ## We'll know we've arrived when…
 
 - A brand-new CLI tool gets a *competent* imp in five minutes and a *great*
-  one within a week of real use — purely from accumulated lessons.
+  one within a week of real use — from reviewed evolution suggestions and evals.
 - The answer routinely arrives faster than you could have typed the command
   yourself.
 - A month of heavy use costs less than lunch.
@@ -60,8 +60,8 @@ it — and the evals prove it, because trust is measured, never assumed.
   change and the sandbox makes the dangerous thing impossible, not just
   discouraged.
 - `imp "..."` routes correctly so often you've forgotten the imps' names.
-- A mature imp's lessons file reads like the tool's missing FAQ — and its
-  best lessons have already been promoted into the prompt.
+- A mature imp's evolution history reads like the tool's missing FAQ — and its
+  best suggestions have already become tested prompt or runtime changes.
 - Sharing an imp is as easy as sharing a dotfile, and summoning someone
   else's imp is as safe as reading one.
 
@@ -79,13 +79,12 @@ it — and the evals prove it, because trust is measured, never assumed.
 
 ## The road from here
 
-The pieces exist: warm processes, classified self-improvement, lesson aging
-and promotion, per-imp sandboxes, a router, a fleet CLI, and evals that
+The pieces exist: warm processes, per-imp sandboxes, a router, a fleet CLI, and evals that
 already catch real bugs. The distance between here and the vision is mostly
-*accumulation* — more imps, deeper lessons, broader eval coverage — plus a
-few missing organs: lessons shared across imps where failures rhyme, a
-promotion pipeline that closes the loop from lesson to prompt automatically,
-and an imp registry so the swarm can spread beyond one machine.
+*accumulation* — more imps, better evolution evidence, broader eval coverage —
+plus a few missing organs: cross-imp quality patterns, a review pipeline that
+closes the loop from suggestion to verified change, and an imp registry so the
+swarm can spread beyond one machine.
 
 Every change to this repo should move toward the world above. If it doesn't,
 it doesn't belong here.

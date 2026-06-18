@@ -3,7 +3,3 @@ bun.lock
 *.tgz
 .DS_Store
 tmp/
-
-# Self-improving imp runtime artifacts (written next to the imp executable)
-imps/*.lessons.md
-imps/*.debug.jsonl

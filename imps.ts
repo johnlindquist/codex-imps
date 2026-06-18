@@ -2,20 +2,17 @@
 /**
  * imps — manage the fleet of codex imps.
  *
- *   imps list                     roster: every imp, warm status, lesson count
+ *   imps list                     roster: every imp, warm status, evolution count
  *   imps ps                       warm imps only: pid, uptime, idle timeout
  *   imps stop <name>|--all        stop warm imp(s)
- *   imps lessons [name]           lesson counts, or one imp's lessons in detail
- *   imps lessons <name> --prune [--days N]   age out old lessons now
- *   imps lessons <name> --promote            print Error-recovery candidates
- *   imps lessons <name> --clear               delete the lessons file
+ *   imps evolve [name]            pending evolution suggestions
  *   imps doctor                   environment sanity checks
  */
-import { existsSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "fs";
+import { existsSync, readdirSync, unlinkSync } from "fs";
 import { join } from "path";
 import { spawn, spawnSync } from "child_process";
 import { metaPath, readMeta, socketPath, stopWarmImp, tryConnect } from "./lib/imp.ts";
-import { parseLessons, pruneExpiredLessons } from "./lib/self-improve.ts";
+import { evolutionFilePath, pendingEvolutionCount, readEvolutionSuggestions } from "./lib/evolution.ts";
 
 const IMPS_DIR = join(import.meta.dir, "imps");
 
@@ -23,16 +20,6 @@ function roster(): string[] {
   return readdirSync(IMPS_DIR)
     .filter((f) => /^imp-[a-z0-9-]+$/.test(f))
     .sort();
-}
-
-function lessonsPath(name: string): string {
-  return join(IMPS_DIR, `${name}.lessons.md`);
-}
-
-function lessonCount(name: string): number {
-  const p = lessonsPath(name);
-  if (!existsSync(p)) return 0;
-  return parseLessons(readFileSync(p, "utf8")).length;
 }
 
 async function isWarm(name: string): Promise<boolean> {
@@ -51,11 +38,11 @@ function fmtUptime(startedAt?: number): string {
 async function cmdList(): Promise<void> {
   const names = roster();
   const pad = Math.max(...names.map((n) => n.length)) + 2;
-  console.log(`${"IMP".padEnd(pad)}WARM   LESSONS`);
+  console.log(`${"IMP".padEnd(pad)}WARM   EVOLUTIONS`);
   for (const name of names) {
     const warm = (await isWarm(name)) ? "yes" : "-";
-    const lessons = lessonCount(name) || "-";
-    console.log(`${name.padEnd(pad)}${String(warm).padEnd(7)}${lessons}`);
+    const pending = pendingEvolutionCount(name) || "-";
+    console.log(`${name.padEnd(pad)}${String(warm).padEnd(7)}${pending}`);
   }
 }
 
@@ -90,68 +77,30 @@ async function cmdStop(target?: string): Promise<void> {
   if (stopped === 0) console.log(target === "--all" ? "no warm imps to stop" : `${target} is not warm`);
 }
 
-function cmdLessons(name?: string, flags: string[] = []): void {
+function cmdEvolve(name?: string): void {
   if (!name) {
     let any = false;
     for (const imp of roster()) {
-      const count = lessonCount(imp);
+      const count = pendingEvolutionCount(imp);
       if (count > 0) {
-        console.log(`${imp.padEnd(24)}${count} lesson${count === 1 ? "" : "s"}   (${lessonsPath(imp)})`);
+        console.log(`${imp.padEnd(24)}${count} pending evolution${count === 1 ? "" : "s"}   (${evolutionFilePath(imp)})`);
         any = true;
       }
     }
-    if (!any) console.log("no imp has recorded lessons");
+    if (!any) console.log("no pending imp evolutions");
     return;
   }
 
-  const p = lessonsPath(name);
-  if (!existsSync(p)) {
-    console.log(`${name} has no lessons file (${p})`);
+  const suggestions = readEvolutionSuggestions(name).filter((s) => s.state === "pending");
+  if (suggestions.length === 0) {
+    console.log(`${name} has no pending evolutions (${evolutionFilePath(name)})`);
     return;
   }
-  const content = readFileSync(p, "utf8");
-  const lessons = parseLessons(content);
-
-  if (flags.includes("--clear")) {
-    unlinkSync(p);
-    console.log(`cleared ${lessons.length} lesson(s): deleted ${p}`);
-    return;
-  }
-
-  if (flags.includes("--prune")) {
-    const daysIdx = flags.indexOf("--days");
-    const days = daysIdx !== -1 ? Number(flags[daysIdx + 1]) : 30;
-    const pruned = pruneExpiredLessons(content, days);
-    if (pruned === content) {
-      console.log(`nothing to prune (${lessons.length} lesson(s) within ${days} days)`);
-      return;
-    }
-    if (pruned.trim()) writeFileSync(p, pruned, "utf8");
-    else unlinkSync(p);
-    const kept = pruned.trim() ? parseLessons(pruned).length : 0;
-    console.log(`pruned ${lessons.length - kept} lesson(s), kept ${kept}`);
-    return;
-  }
-
-  if (flags.includes("--promote")) {
-    if (lessons.length === 0) {
-      console.log("no lessons to promote");
-      return;
-    }
-    console.log(`Paste-ready candidates for the "## Error recovery" section of imps/${name}`);
-    console.log(`(fill in the FIX command, then delete the graduated lesson with --prune/--clear):\n`);
-    for (const l of lessons) {
-      const evidence = (l.evidence ?? "").slice(0, 70).trim() || `failure of ${l.command ?? "a command"}`;
-      const from = [l.command && `\`${l.command}\``, l.category && `[${l.category}]`, l.date].filter(Boolean).join(" ") || "a legacy lesson";
-      console.log(`"${evidence}" -> YOUR_FIX_COMMAND_HERE   # graduated from ${from}`);
-    }
-    return;
-  }
-
-  console.log(`${name}: ${lessons.length} lesson(s) in ${p}\n`);
-  for (const l of lessons) {
-    console.log(`  ${l.date ?? "undated"}  [${l.category ?? "?"}]  ${l.command ?? "(no command)"}`);
-    if (l.evidence) console.log(`      evidence: ${l.evidence.slice(0, 100)}`);
+  console.log(`${name}: ${suggestions.length} pending evolution${suggestions.length === 1 ? "" : "s"} in ${evolutionFilePath(name)}\n`);
+  for (const s of suggestions) {
+    console.log(`  ${s.created_at}  score ${s.score}/${s.benchmark}  ${s.severity}`);
+    console.log(`      ${s.recommendation}`);
+    if (s.evidence.length > 0) console.log(`      evidence: ${s.evidence[0]}`);
   }
 }
 
@@ -197,8 +146,9 @@ switch (cmd) {
   case "stop":
     await cmdStop(rest[0]);
     break;
-  case "lessons":
-    cmdLessons(rest.find((a) => !a.startsWith("--")), rest.filter((a) => a.startsWith("--") || /^\d+$/.test(a)));
+  case "evolve":
+  case "evolutions":
+    cmdEvolve(rest.find((a) => !a.startsWith("--")));
     break;
   case "doctor":
     await cmdDoctor();
@@ -223,13 +173,10 @@ switch (cmd) {
     console.log(`imps — manage the fleet of codex imps
 
 Usage:
-  imps [list]                    roster: every imp, warm status, lesson count
+  imps [list]                    roster: every imp, warm status, evolution count
   imps ps                        warm imps: pid, uptime, idle timeout
   imps stop <name>|--all         stop warm imp(s)
-  imps lessons [name]            lesson counts, or one imp's lessons
-  imps lessons <name> --prune [--days N]   age out old lessons
-  imps lessons <name> --promote  print Error-recovery candidates to graduate
-  imps lessons <name> --clear    delete the lessons file
+  imps evolve [name]             pending evolution suggestions
   imps doctor                    environment sanity checks
 
 A free-text prompt routes via the \`imp\` router: imps "what changed in git?"`);
