@@ -128,6 +128,7 @@ imps ps                      # warm imps: pid, uptime, idle timeout
 imps stop imp-gh             # stop one warm imp (or: imps stop --all)
 imps evolve                  # which imps have pending evolution suggestions
 imps evolve imp-gh           # review one imp's pending suggestions
+imp evolve imp-gh            # same review command from the user-facing router
 imps doctor                  # env sanity checks + stale socket cleanup
 ```
 
@@ -169,6 +170,7 @@ Instead, each non-interactive invocation records a compact, redacted session log
 ```bash
 imps evolve                  # list imps with pending suggestions
 imps evolve imp-gh           # inspect pending suggestions for one imp
+imp evolve imp-gh            # same review command from the user-facing router
 ```
 
 When an imp has pending suggestions, its next run prints a terse stderr status line before the turn starts:

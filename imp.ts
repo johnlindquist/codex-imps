@@ -128,6 +128,17 @@ function runStep(imp: string, args: string[]): Promise<number> {
   });
 }
 
+function runFleet(args: string[]): Promise<number> {
+  return new Promise((resolve) => {
+    const child = spawn(join(import.meta.dir, "imps.ts"), args, { stdio: "inherit", cwd: process.cwd() });
+    child.on("exit", (code, signal) => resolve(signal ? 130 : code ?? 0));
+    child.on("error", (e) => {
+      console.error(`imp: failed to launch imps: ${e.message}`);
+      resolve(1);
+    });
+  });
+}
+
 function usage(): void {
   console.log(`imp — summon the right imp for a prompt
 
@@ -135,6 +146,7 @@ Usage:
   imp <prompt>            route by keywords and run the matching imp
   imp <tool> <prompt>     explicit: imp git "...", imp jq "..." (no guessing)
   imp "<a>; then <b>"     compound: each segment runs on its own imp, in order
+  imp evolve <name>       review pending evolution suggestions for an imp
   imp --which <prompt>    print the routing decision without running
   imp -l | --list         list all routes
 
@@ -153,6 +165,10 @@ if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
 if (args[0] === "-l" || args[0] === "--list") {
   for (const r of ROUTES) console.log(`${r.imp.padEnd(24)}${r.hint}`);
   process.exit(0);
+}
+
+if (args[0] === "evolve" || args[0] === "evolutions") {
+  process.exit(await runFleet(["evolve", ...args.slice(1)]));
 }
 
 const names = roster();
