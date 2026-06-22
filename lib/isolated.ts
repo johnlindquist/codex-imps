@@ -11,6 +11,7 @@ import { spawn } from "child_process";
 import { ensureWarmImp, runViaWarmImp, serveImp } from "./imp.ts";
 import { prepareIsolatedCodexHome } from "./codex-runtime.ts";
 import { createEvolutionObserver, evolutionStatusLine } from "./evolution.ts";
+import { DEFAULT_IMP_MODEL, DEFAULT_IMP_REASONING_EFFORT } from "./defaults.ts";
 
 export interface ImpConfig {
   name: string;
@@ -29,7 +30,7 @@ export function createIsolatedCodex(rawConfig: ImpConfig) {
   // Symlinks auth into the throwaway Codex home.
   const runtime = prepareIsolatedCodexHome(config, isolatedHome, realHome);
 
-  const model = config.model || process.env.CODEX_IMP_MODEL || process.env.CODEX_PROFILE_MODEL || "gpt-5.3-codex-spark";
+  const model = config.model || process.env.CODEX_IMP_MODEL || process.env.CODEX_PROFILE_MODEL || DEFAULT_IMP_MODEL;
 
   const codex = new Codex({
     env: {
@@ -42,7 +43,7 @@ export function createIsolatedCodex(rawConfig: ImpConfig) {
     config: {
       base_instructions: config.baseInstructions,
       developer_instructions: config.developerInstructions,
-      model_reasoning_effort: config.reasoningEffort || "low",
+      model_reasoning_effort: config.reasoningEffort || DEFAULT_IMP_REASONING_EFFORT,
       show_raw_agent_reasoning: true,
 
       skills: { include_instructions: false },
@@ -90,7 +91,7 @@ export function createIsolatedCodex(rawConfig: ImpConfig) {
 }
 
 function buildInteractiveFlags(config: ImpConfig, hooksOn = false): string[] {
-  const model = config.model || process.env.CODEX_IMP_MODEL || process.env.CODEX_PROFILE_MODEL || "gpt-5.3-codex-spark";
+  const model = config.model || process.env.CODEX_IMP_MODEL || process.env.CODEX_PROFILE_MODEL || DEFAULT_IMP_MODEL;
   return [
     "--dangerously-bypass-approvals-and-sandbox",
     "--disable", "plugins",
@@ -111,7 +112,7 @@ function buildInteractiveFlags(config: ImpConfig, hooksOn = false): string[] {
     "-c", "memories.use_memories=false",
     "-c", "mcp_servers={}",
     "-c", 'web_search="disabled"',
-    "-c", `model_reasoning_effort="${config.reasoningEffort || "low"}"`,
+    "-c", `model_reasoning_effort="${config.reasoningEffort || DEFAULT_IMP_REASONING_EFFORT}"`,
     "-m", model,
   ];
 }
@@ -130,23 +131,31 @@ Treat that file as the input for this task. Read it with the narrowest command (
 
 export function parseArgs(argv: string[]) {
   const args = argv.slice(2);
-  const interactive = args.includes("-i") || args.includes("--interactive");
   const quiet = args.includes("-q") || args.includes("--quiet");
   const help = args.includes("--help") || args.includes("-h");
   // --daemon is a back-compat alias from before the imp rename.
   const serve = args.includes("--serve") || args.includes("--daemon");
   const noWarm = args.includes("--no-warm");
+  const run = args.includes("--run") || args.includes("--exec") || args.includes("--non-interactive");
+  const interactive = args.includes("-i") || args.includes("--interactive") || (!run && !quiet && !serve && !noWarm && !help);
   // --effort <none|minimal|low|medium|high|xhigh>: per-turn reasoning override (warm imp path)
   const effortIdx = args.findIndex((a) => a === "--effort");
   const effort = effortIdx !== -1 ? args[effortIdx + 1] : undefined;
-  const flags = ["-q", "--quiet", "-i", "--interactive", "--help", "-h", "--serve", "--daemon", "--no-warm"];
+  const flags = [
+    "-q", "--quiet",
+    "-i", "--interactive",
+    "--help", "-h",
+    "--serve", "--daemon",
+    "--no-warm",
+    "--run", "--exec", "--non-interactive",
+  ];
   // Drop the value following --effort only when --effort is actually present
   // (effortIdx === -1 would otherwise make effortIdx+1 === 0 and strip the first prompt word).
   const effortValueIdx = effortIdx !== -1 ? effortIdx + 1 : -1;
   const prompt = args
     .filter((a, i) => !flags.includes(a) && a !== "--effort" && i !== effortValueIdx)
     .join(" ");
-  return { interactive, quiet, help, serve, noWarm, effort, prompt, noArgs: args.length === 0 };
+  return { interactive, quiet, help, serve, noWarm, run, effort, prompt, noArgs: args.length === 0 };
 }
 
 // Renders streaming app-server JSON-RPC notifications (warm imp path).
@@ -217,22 +226,23 @@ export async function runImp(rawConfig: ImpConfig) {
   const config = rawConfig;
   const { interactive, quiet, help, serve, noWarm, effort, prompt, noArgs } = parseArgs(process.argv);
 
-  if (help || noArgs) {
-    const displayModel = config.model || process.env.CODEX_IMP_MODEL || process.env.CODEX_PROFILE_MODEL || "gpt-5.3-codex-spark";
-    const displayEffort = config.reasoningEffort || "low";
+  if (help) {
+    const displayModel = config.model || process.env.CODEX_IMP_MODEL || process.env.CODEX_PROFILE_MODEL || DEFAULT_IMP_MODEL;
+    const displayEffort = config.reasoningEffort || DEFAULT_IMP_REASONING_EFFORT;
     console.log(`${config.name} — isolated codex imp (${displayModel}, ${displayEffort} effort)
 
 Usage:
-  ${config.name} <prompt>            Run with streaming (auto-warms the imp for instant responses)
+  ${config.name} [prompt]            Open interactive Codex TUI, optionally seeded with a prompt
+  ${config.name} --run <prompt>      Run non-interactively with streaming output
   ${config.name} -q <prompt>         Quiet mode (buffered, final answer only)
-  ${config.name} -i [prompt]         Interactive codex TUI in this terminal
+  ${config.name} -i [prompt]         Same as default: interactive Codex TUI in this terminal
   ${config.name} --no-warm <prompt>  Opt out: force a cold in-process run (no warm imp)
   ${config.name} --serve             Run the warm imp server in the foreground (for supervisors)
   ${config.name} --effort <level>    Reasoning effort: none|minimal|low|medium|high|xhigh (warm imp)
   ${config.name} --help              Show this help
 
-By default the first call auto-starts a background warm imp and every call routes
-through it for ~2x lower latency. Use --no-warm to bypass it for a one-off run.`);
+By default imps open the interactive Codex TUI. Use --run for the warm
+non-interactive path, or --no-warm for a cold one-off run.`);
     process.exit(0);
   }
 
@@ -244,7 +254,7 @@ through it for ~2x lower latency. Use --no-warm to bypass it for a one-off run.`
   const statusLine = evolutionStatusLine(config.name);
   if (statusLine) process.stderr.write(`${statusLine}\n`);
 
-  if (interactive) {
+  if (interactive && process.stdin.isTTY) {
     // Launch the codex interactive TUI right here in the current terminal.
     // No cmux, no surfaces — the profile knows nothing about any terminal manager.
     const realHome = process.env.HOME!;
@@ -290,7 +300,7 @@ through it for ~2x lower latency. Use --no-warm to bypass it for a one-off run.`
   }
 
   // Piped stdin becomes a temp file the imp can read with shell commands, so
-  // `cat data.json | imp-jq "count users"` just works. TTY stdin is ignored;
+  // `cat data.json | imp-jq --run "count users"` just works. TTY stdin is ignored;
   // an open-but-empty pipe yields "" and is also ignored.
   let effectivePrompt = prompt;
   let stdinFile: string | undefined;
@@ -308,10 +318,10 @@ through it for ~2x lower latency. Use --no-warm to bypass it for a one-off run.`
 
   const ac = new AbortController();
 
-  // Warm by default: auto-start (and reuse) a background imp so every call
-  // routes through the persistent app-server — skips process spawn + auth/config
-  // load + WebSocket prewarm (paid once at imp start). Opt out with --no-warm.
-  // If the imp can't be brought up, fall through to a cold in-process run.
+  // Non-interactive runs use a warm app-server by default: auto-start (and reuse)
+  // a background imp so every call skips process spawn + auth/config load +
+  // WebSocket prewarm. Opt out with --no-warm. If the imp can't be brought up,
+  // fall through to a cold in-process run.
   if (!noWarm && (await ensureWarmImp(config))) {
     const onSignal = () => { ac.abort(); cleanupStdin(); process.exit(130); };
     process.on("SIGINT", onSignal);

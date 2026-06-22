@@ -25,11 +25,11 @@ if (existsSync(authSrc) && !existsSync(`${isolatedHome}/auth.json`)) {
   symlinkSync(authSrc, `${isolatedHome}/auth.json`);
 }
 
-const MODEL = "gpt-5.3-codex-spark";
+const MODEL = "gpt-5.5";
 
 // Same isolation config as lib/isolated.ts, passed via ThreadStartParams.config
 const isolationConfig: Record<string, unknown> = {
-  model_reasoning_effort: "low",
+  model_reasoning_effort: "medium",
   show_raw_agent_reasoning: true,
   skills: { include_instructions: false },
   include_apps_instructions: false,

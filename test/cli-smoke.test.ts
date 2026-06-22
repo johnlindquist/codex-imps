@@ -30,8 +30,8 @@ test("every profile binary loads and prints usage on --help", async () => {
   }
 }, 30000);
 
-test("no-args prints usage and exits 0 (not an error)", async () => {
-  const { code, out } = await run(["imps/imp-minimal"]);
+test("--help prints usage and exits 0 (not an error)", async () => {
+  const { code, out } = await run(["imps/imp-minimal", "--help"]);
   expect(code).toBe(0);
   expect(out).toContain("Usage:");
 });
@@ -40,7 +40,7 @@ test("a real prompt survives parsing at the binary level (regression guard)", as
   // If arg parsing drops the prompt, the bin exits 1 immediately with this message
   // BEFORE any model call. We force --no-warm + kill quickly so we never pay a turn.
   const { out, killed, code } = await run(
-    ["imps/imp-minimal", "--no-warm", "summarize the history"],
+    ["imps/imp-minimal", "--run", "--no-warm", "summarize the history"],
     { killAfterMs: 1500 },
   );
   expect(out).not.toContain("no prompt provided");

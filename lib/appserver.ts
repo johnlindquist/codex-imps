@@ -19,6 +19,7 @@ import { rmSync } from "fs";
 import type { ImpConfig } from "./isolated.ts";
 import { prepareIsolatedCodexHome } from "./codex-runtime.ts";
 import { createEvolutionObserver } from "./evolution.ts";
+import { DEFAULT_IMP_MODEL, DEFAULT_IMP_REASONING_EFFORT } from "./defaults.ts";
 
 export interface TurnHandlers {
   /** Raw app-server notification (method + params). */
@@ -39,7 +40,7 @@ export class AppServerClient {
 
   constructor(config: ImpConfig) {
     this.config = config;
-    this.model = this.config.model || process.env.CODEX_IMP_MODEL || process.env.CODEX_PROFILE_MODEL || "gpt-5.3-codex-spark";
+    this.model = this.config.model || process.env.CODEX_IMP_MODEL || process.env.CODEX_PROFILE_MODEL || DEFAULT_IMP_MODEL;
     this.isolatedHome = `/tmp/codex-appserver-${this.config.name}-${process.pid}`;
   }
 
@@ -137,7 +138,7 @@ export class AppServerClient {
       developerInstructions: this.config.developerInstructions,
       ephemeral: true,
       config: {
-        model_reasoning_effort: this.config.reasoningEffort || "low",
+        model_reasoning_effort: this.config.reasoningEffort || DEFAULT_IMP_REASONING_EFFORT,
         show_raw_agent_reasoning: true,
         skills: { include_instructions: false },
         include_apps_instructions: false,
@@ -213,7 +214,7 @@ export class AppServerClient {
         threadId,
         input: [{ type: "text", text: prompt, text_elements: [] }],
         cwd: opts?.cwd || process.cwd(),
-        effort: opts?.effort || this.config.reasoningEffort || "low",
+        effort: opts?.effort || this.config.reasoningEffort || DEFAULT_IMP_REASONING_EFFORT,
       });
     });
   }

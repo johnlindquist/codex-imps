@@ -7,17 +7,28 @@ const argv = (...rest: string[]) => ["bun", "imp-x", ...rest];
 test("bare prompt is preserved (regression: --effort once dropped arg 0)", () => {
   const r = parseArgs(argv("summarize the history"));
   expect(r.prompt).toBe("summarize the history");
+  expect(r.interactive).toBe(true);
   expect(r.effort).toBeUndefined();
   expect(r.noArgs).toBe(false);
 });
 
 test("multi-word prompt with no flags", () => {
-  expect(parseArgs(argv("list", "my", "open", "PRs")).prompt).toBe("list my open PRs");
+  const r = parseArgs(argv("list", "my", "open", "PRs"));
+  expect(r.prompt).toBe("list my open PRs");
+  expect(r.interactive).toBe(true);
+});
+
+test("--run forces non-interactive streaming and keeps prompt", () => {
+  const r = parseArgs(argv("--run", "list", "my", "open", "PRs"));
+  expect(r.run).toBe(true);
+  expect(r.interactive).toBe(false);
+  expect(r.prompt).toBe("list my open PRs");
 });
 
 test("-q sets quiet and keeps prompt", () => {
   const r = parseArgs(argv("-q", "say hi"));
   expect(r.quiet).toBe(true);
+  expect(r.interactive).toBe(false);
   expect(r.prompt).toBe("say hi");
 });
 
@@ -40,6 +51,7 @@ test("-i sets interactive", () => {
 test("--no-warm sets noWarm and keeps prompt", () => {
   const r = parseArgs(argv("--no-warm", "say hi"));
   expect(r.noWarm).toBe(true);
+  expect(r.interactive).toBe(false);
   expect(r.prompt).toBe("say hi");
 });
 
@@ -51,6 +63,7 @@ test("--serve flag", () => {
 test("no args sets noArgs", () => {
   const r = parseArgs(argv());
   expect(r.noArgs).toBe(true);
+  expect(r.interactive).toBe(true);
   expect(r.prompt).toBe("");
 });
 

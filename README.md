@@ -1,6 +1,6 @@
 # codex-imps
 
-Single-purpose, isolated [Codex SDK](https://www.npmjs.com/package/@openai/codex-sdk) agents — **imps** — for common CLI tools. An imp is a small, fast daemon-spirit bound to exactly one tool. Each imp runs with ~6K input tokens instead of the default ~22K — faster, cheaper, and focused. Warm mode is **on by default**: the first call auto-starts a warm background imp and every later call reuses it for ~2x lower latency (opt out with `--no-warm`).
+Single-purpose, isolated [Codex SDK](https://www.npmjs.com/package/@openai/codex-sdk) agents — **imps** — for common CLI tools. An imp is a small, fast daemon-spirit bound to exactly one tool. Each imp runs with ~6K input tokens instead of the default ~22K — faster, cheaper, and focused. Interactive mode is **on by default**; explicit non-interactive runs use a warm background imp for ~2x lower latency.
 
 All imps start with `imp-` so you can type `imp-` and tab-complete to summon the whole roster.
 
@@ -11,11 +11,11 @@ Where is all this headed? [VISION.md](./VISION.md) — the perfect future we're 
 An imp is a single executable TypeScript file that wraps a CLI tool with an isolated Codex agent. It:
 
 - Loads **zero** user-space config (no plugins, skills, hooks, memories, or MCP servers)
-- Replaces the ~20K system prompt with a focused, Oracle-tuned prompt optimized for low-reasoning models
+- Replaces the ~20K system prompt with a focused, Oracle-tuned prompt optimized for small tool agents
 - Disables unused tool schemas (Gmail, Slack, web, imagegen) via feature flags
 - Symlinks only `auth.json` for login — token refreshes propagate automatically
-- Uses `gpt-5.3-codex-spark` with `low` reasoning effort for maximum speed
-- Streams by default — shows commands, output, reasoning, and todos as they happen
+- Uses `gpt-5.5` with `medium` reasoning effort by default
+- Opens the interactive Codex TUI by default; `--run` streams non-interactive output when you want automation
 - Clean Ctrl+C — kills the agent, its commands, and cleans up temp files immediately
 
 ## Install
@@ -31,7 +31,7 @@ bun link
 This symlinks all imps to `~/.bun/bin/`. Type `imp-` then tab to see them all. You can also run imps directly without linking:
 
 ```bash
-bun imps/imp-gh "list my open PRs"
+bun imps/imp-gh
 ```
 
 ## The imps
@@ -70,16 +70,19 @@ Local-only imps run sandboxed to match their promises: `imp-rg` is `read-only`; 
 
 ## Usage
 
-Every imp streams by default — you see commands, output, reasoning, and todos as they happen:
+Every imp opens the interactive Codex TUI by default. Pass an initial prompt to seed the session:
 
 ```bash
-# Streaming (default) — shows everything in real-time
+# Interactive TUI in this terminal
 imp-gh "list my open PRs"
 
-# Quiet mode — buffered, only shows the final answer
+# Non-interactive streaming — shows commands, output, reasoning, and todos
+imp-gh --run "list my open PRs"
+
+# Quiet non-interactive mode — buffered, only shows the final answer
 imp-gh -q "list my open PRs"
 
-# Interactive codex TUI in this terminal
+# Explicit interactive flag, equivalent to the default
 imp-gh -i
 
 # Help
@@ -93,9 +96,9 @@ imp-gh --help
 Piped stdin is saved to a temp file and pointed out to the imp, so imps compose in pipelines:
 
 ```bash
-cat data.json | imp-jq "how many users are on the pro plan?"
-curl -s https://api.example.com/things | imp-jq "group these by status and count"
-git log --oneline -30 | imp-git "summarize what shipped this week"
+cat data.json | imp-jq --run "how many users are on the pro plan?"
+curl -s https://api.example.com/things | imp-jq --run "group these by status and count"
+git log --oneline -30 | imp-git --run "summarize what shipped this week"
 ```
 
 ### Route without thinking: `imp`
@@ -138,16 +141,16 @@ Warm imps **shut themselves down after 30 idle minutes** (the next call transpar
 
 Typed `imps "do the thing"` when you meant `imp`? It forwards: anything that isn't a fleet command but looks like a prompt routes via the `imp` router. Near-miss subcommands (`imps lis`) still show usage instead of spending a model turn.
 
-### Warm mode (on by default)
+### Non-Interactive Warm Mode
 
-**Warm mode is the default — no flags, no setup.** The first call to any imp auto-starts a warm background copy of itself and routes through it; every later call reuses that same warm imp for instant responses. The warm imp holds **one persistent `codex app-server` process** alive — so process spawn, auth/config load, and the WebSocket connection + prewarm are all paid **once** on that first call, not per prompt. Each call is a fresh `thread/start` + `turn/start` on the already-warm process.
+Non-interactive runs use warm mode by default. The first `--run` call to any imp auto-starts a warm background copy of itself and routes through it; later `--run` calls reuse that same warm imp for instant responses. The warm imp holds **one persistent `codex app-server` process** alive — so process spawn, auth/config load, and the WebSocket connection + prewarm are all paid **once** on that first call, not per prompt. Each call is a fresh `thread/start` + `turn/start` on the already-warm process.
 
 ```bash
 # First call auto-spawns a warm background imp, answers, and leaves it warm
-imp-gh "list my open PRs"
+imp-gh --run "list my open PRs"
 
 # Every later call routes through the warm imp automatically — just faster
-imp-gh "list my open issues"
+imp-gh --run "list my open issues"
 
 # Opt OUT: force a cold in-process run (SDK exec, no warm imp)
 imp-gh --no-warm "list my open PRs"
@@ -156,10 +159,10 @@ imp-gh --no-warm "list my open PRs"
 imp-gh --serve
 
 # Per-prompt reasoning override (warm path)
-imp-gh --effort minimal "what's my gh auth status"
+imp-gh --run --effort minimal "what's my gh auth status"
 ```
 
-The auto-started warm imp is detached and persists after the call returns, so it stays warm for your next prompt. Pass `--no-warm` whenever you want a one-off run that doesn't start or use the warm imp.
+The auto-started warm imp is detached and persists after the call returns, so it stays warm for your next non-interactive prompt. Pass `--no-warm` whenever you want a one-off run that doesn't start or use the warm imp.
 
 **Edits hot-reload automatically.** A warm imp holds your imp's code in memory, so editing it would normally have no effect until you killed the process by hand. Instead, every call fingerprints the imp's source — the executable (its instructions, model, env) plus every `lib/*.ts` module it loads — and compares it to what the running warm imp was started with. If anything changed, the stale process is stopped and a fresh one is spawned **before** your prompt runs. So you can tweak an imp's internal prompt, swap the model, or change shared lib code and the **very next prompt respects the change** — no manual restart, no flag.
 
@@ -185,9 +188,9 @@ When an imp has pending suggestions, its next run prints a terse stderr status l
 
 At 3 pending suggestions the runtime writes `~/.imp/<imp-name>.evolve-request.json` and the status line changes to `auto-evolution ready`. That is the automatic trigger: it makes the review/apply step visible on the next run without silently rewriting the imp. After you make the prompt or code change, mark the reviewed suggestions with `--applied`; use `--dismiss` for noisy suggestions. The status line is deliberately stderr-only so stdout remains safe for pipes.
 
-**`--effort <none|minimal|low|medium|high|xhigh>`** overrides reasoning effort for a single prompt. Lower is faster, but verified caveat: **`none` breaks tool use** — with zero reasoning the model answers trivial prompts ("say hi") but never decides to run commands, so a real `gh` task returns empty. `low` (the default) is the floor that reliably executes tools. Use `none`/`minimal` only for pure text replies.
+**`--effort <none|minimal|low|medium|high|xhigh>`** overrides reasoning effort for a single prompt. Lower is faster, but verified caveat: **`none` breaks tool use** — with zero reasoning the model answers trivial prompts ("say hi") but never decides to run commands, so a real `gh` task returns empty. `medium` is the default. Use `none`/`minimal` only for pure text replies.
 
-Measured on `gpt-5.3-codex-spark` low effort, prompt `"say hi"`, N=8 each (same session):
+Measured on the previous `gpt-5.3-codex-spark` low-effort default, prompt `"say hi"`, N=8 each (same session):
 
 | Mode | Median total | Mean | Range |
 |---|---|---|---|
@@ -218,7 +221,7 @@ Your 2 most recent PRs:                            ← agent's answer (normal)
 2. #38 add search (merged)
 ```
 
-Reasoning text appears in dim italic. Todo items show with ○/✓ marks. All verbose output goes to stderr, final answer to stdout — so `imp-gh "list PRs" > prs.txt` captures only the clean answer.
+Reasoning text appears in dim italic. Todo items show with ○/✓ marks. All verbose output goes to stderr, final answer to stdout — so `imp-gh --run "list PRs" > prs.txt` captures only the clean answer.
 
 ## Create your own
 
@@ -244,14 +247,14 @@ chmod +x imps/imp-my-tool
 
 ## Prompt design
 
-Prompts are optimized for `gpt-5.3-codex-spark` at `low` reasoning effort (reviewed by Oracle/GPT-5.5-pro). Key patterns:
+Prompts are optimized for `gpt-5.5` at `medium` reasoning effort. Key patterns:
 
 - **Operating rule first**: "Run [tool] via exec_command before any final answer. Do not answer from memory."
 - **Command maps**: Explicit IF/THEN mappings instead of vague instructions. Low-reasoning models need literal decision shortcuts.
 - **Worked examples**: 3-5 few-shot examples per imp (user request → numbered exact command sequence → report step). Low-reasoning models imitate examples far better than they follow abstract rules.
 - **Error recovery maps**: exact error text → exact next command, so a failed command never dead-ends the turn.
 - **Consistent structure**: Every imp follows the same section order: Operating rule → Command map → Workflow → Worked examples → Error recovery → Command rules → Output.
-- **No --help dumps**: Curated command maps are more effective than raw CLI reference for low-reasoning models.
+- **No --help dumps**: Curated command maps are more effective than raw CLI reference for focused tool agents.
 
 ## How isolation works
 

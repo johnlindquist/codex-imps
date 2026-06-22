@@ -80,11 +80,11 @@ Please generate the complete imp file with:
   - Operating rule (command-first, no memory answers)
   - Command map (explicit IF/THEN — keyword → exact command)
   - Workflow (numbered steps for common patterns)
-  - Worked examples (2-4 few-shot examples: user request → numbered exact command sequence → what to report; low-reasoning models imitate examples far better than they follow abstract rules)
+  - Worked examples (2-4 few-shot examples: user request → numbered exact command sequence → what to report; focused tool agents imitate examples far better than they follow abstract rules)
   - Error recovery (exact error text → exact next command)
   - Command rules (what NOT to do)
   - Output rules (terse, no self-description)
-- Do NOT include a full --help dump in the instructions — use a curated command map instead (low-reasoning models scan maps better than raw help text)
+- Do NOT include a full --help dump in the instructions — use a curated command map instead (focused tool agents scan maps better than raw help text)
 - Any extra env vars the tool needs passed through via extraEnv
 ```
 
@@ -93,7 +93,7 @@ Please generate the complete imp file with:
 ## Tips
 
 - **Name convention**: `imp-` prefix + tool name (e.g., `imp-docker`, `imp-kubectl`, `imp-fly`)
-- **Command maps over --help**: Low-reasoning models (spark at `low` effort) follow explicit keyword→command mappings better than scanning full CLI reference text
+- **Command maps over --help**: Imps follow explicit keyword→command mappings better than scanning full CLI reference text
 - **Operating rule is critical**: "Run TOOL via exec_command before any final answer" prevents text-only responses
 - **Keep rules strict**: The agent should refuse to do anything outside the tool's scope
 - **Extra env vars**: If your tool needs specific env vars (API keys, config paths), pass them via `extraEnv`
