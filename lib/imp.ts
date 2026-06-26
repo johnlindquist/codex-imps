@@ -23,7 +23,16 @@ import { join, dirname } from "path";
 import { createHash } from "crypto";
 import { spawn } from "child_process";
 import type { ImpConfig } from "./isolated.ts";
+import type { EvolutionPromptSignal } from "./evolution.ts";
 import { AppServerClient } from "./appserver.ts";
+
+type WarmImpRequest = {
+  prompt: string;
+  quiet: boolean;
+  cwd: string;
+  effort?: string;
+  promptSignal?: Pick<EvolutionPromptSignal, "originalPrompt" | "userSignal" | "userFeedback">;
+};
 
 export function socketPath(name: string): string {
   return `/tmp/codex-imp-${name}.sock`;
@@ -137,7 +146,7 @@ export async function serveImp(config: ImpConfig): Promise<void> {
       const line = buf.slice(0, nl);
       buf = buf.slice(nl + 1);
 
-      let req: { prompt?: string; quiet?: boolean; cwd?: string; effort?: string; ctl?: string };
+      let req: Partial<WarmImpRequest> & { ctl?: string };
       try {
         req = JSON.parse(line);
       } catch (e: any) {
@@ -175,7 +184,7 @@ export async function serveImp(config: ImpConfig): Promise<void> {
                 if (!req.quiet) send({ type: "notif", method, params });
               },
             },
-            { cwd: req.cwd, effort: req.effort },
+            { cwd: req.cwd, effort: req.effort, promptSignal: req.promptSignal },
           );
           send({ type: "final", text: finalText });
           send({ type: "done" });
@@ -335,7 +344,7 @@ export async function ensureWarmImp(config: ImpConfig, readyTimeoutMs = 30000): 
 
 export async function runViaWarmImp(
   name: string,
-  req: { prompt: string; quiet: boolean; cwd: string; effort?: string },
+  req: WarmImpRequest,
   handlers: ClientEventHandlers,
   signal?: AbortSignal,
 ): Promise<void> {

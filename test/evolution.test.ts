@@ -12,6 +12,7 @@ import {
   evolutionTriggerPath,
   refreshEvolutionTrigger,
   makeEvolutionSuggestion,
+  parseEvolutionPromptSignal,
   pendingEvolutionCount,
   readEvolutionSuggestions,
   readEvolutionTrigger,
@@ -48,6 +49,30 @@ test("clean completed sessions do not create suggestions", () => {
   ).toBeNull();
 });
 
+test("leading plus feedback line is stripped from the model prompt", () => {
+  const parsed = parseEvolutionPromptSignal(`+This should know about github.com/johnlindquist/fusion
+
+Please add 4 more bullet points`);
+  expect(parsed.userSignal).toBe("disappointed");
+  expect(parsed.userFeedback).toBe("This should know about github.com/johnlindquist/fusion");
+  expect(parsed.originalPrompt).toContain("github.com/johnlindquist/fusion");
+  expect(parsed.modelPrompt).toBe("Please add 4 more bullet points");
+});
+
+test("leading plus feedback line works without a blank separator", () => {
+  const parsed = parseEvolutionPromptSignal("+Use gh instead of broad search\nList my open PRs");
+  expect(parsed.userSignal).toBe("disappointed");
+  expect(parsed.userFeedback).toBe("Use gh instead of broad search");
+  expect(parsed.modelPrompt).toBe("List my open PRs");
+});
+
+test("plus signs away from the first character do not trigger feedback parsing", () => {
+  const parsed = parseEvolutionPromptSignal("Explain C++ references\n+not feedback");
+  expect(parsed.userSignal).toBeUndefined();
+  expect(parsed.userFeedback).toBeUndefined();
+  expect(parsed.modelPrompt).toBe("Explain C++ references\n+not feedback");
+});
+
 test("empty final answer creates a pending suggestion", () => {
   const suggestion = makeEvolutionSuggestion({
     imp: "imp-test",
@@ -64,6 +89,24 @@ test("empty final answer creates a pending suggestion", () => {
   expect(pendingEvolutionCount("imp-test")).toBe(1);
   expect(evolutionStatusLine("imp-test")).toContain("🔁 1 evolution pending");
   expect(existsSync(statusFilePath("imp-test"))).toBe(true);
+});
+
+test("leading plus feedback creates a pending suggestion even when completed", () => {
+  const suggestion = makeEvolutionSuggestion({
+    imp: "imp-test",
+    prompt: "Please add 4 more bullet points",
+    finalText: "done",
+    status: "completed",
+    transport: "test",
+    userSignal: "disappointed",
+    userFeedback: "This should know about github.com/johnlindquist/fusion",
+    now: new Date("2026-06-18T12:00:00Z"),
+  });
+  expect(suggestion).not.toBeNull();
+  expect(suggestion!.state).toBe("pending");
+  expect(suggestion!.severity).toBe("medium");
+  expect(suggestion!.recommendation).toContain("Review this session");
+  expect(suggestion!.evidence.join("\n")).toContain("user marked this run for evolution");
 });
 
 test("dedupes pending suggestions by stable key", () => {
@@ -94,6 +137,9 @@ test("redacts common secrets before persistence", () => {
   const telemetry: EvolutionTelemetry = {
     imp: "imp-redact",
     prompt: "token=ghp_abcdefghijklmnopqrstuvwxyz123456",
+    originalPrompt: "+token=ghp_abcdefghijklmnopqrstuvwxyz123456\nreal prompt",
+    userSignal: "disappointed",
+    userFeedback: "token=ghp_abcdefghijklmnopqrstuvwxyz123456",
     finalText: "AWS_SECRET_ACCESS_KEY=abcdef",
     threadId: "thread-redact",
     transport: "test",

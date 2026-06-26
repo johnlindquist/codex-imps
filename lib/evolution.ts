@@ -6,6 +6,14 @@ import { spawn } from "child_process";
 
 export type EvolutionSeverity = "low" | "medium" | "high";
 export type EvolutionState = "pending" | "applied" | "dismissed";
+export type EvolutionUserSignal = "disappointed";
+
+export interface EvolutionPromptSignal {
+  modelPrompt: string;
+  originalPrompt: string;
+  userSignal?: EvolutionUserSignal;
+  userFeedback?: string;
+}
 
 export interface EvolutionSuggestion {
   schema: 1;
@@ -64,6 +72,9 @@ export interface EvolutionJob {
 export interface EvolutionTelemetry {
   imp: string;
   prompt: string;
+  originalPrompt?: string;
+  userSignal?: EvolutionUserSignal;
+  userFeedback?: string;
   finalText?: string;
   threadId?: string;
   turnId?: string;
@@ -78,6 +89,27 @@ export interface EvolutionObserver {
   onAppServerNotification(method: string, params: any): void;
   onSdkEvent(event: any): void;
   finish(extra: { status: string; transport: string; finalText?: string; threadId?: string; turnId?: string }): void;
+}
+
+export function parseEvolutionPromptSignal(prompt: string): EvolutionPromptSignal {
+  if (!prompt.startsWith("+")) return { modelPrompt: prompt, originalPrompt: prompt };
+  const newline = prompt.search(/\r?\n/);
+  if (newline === -1) {
+    return {
+      modelPrompt: "",
+      originalPrompt: prompt,
+      userSignal: "disappointed",
+      userFeedback: prompt.slice(1).trim(),
+    };
+  }
+  const line = prompt.slice(0, newline);
+  const newlineLength = prompt[newline] === "\r" && prompt[newline + 1] === "\n" ? 2 : 1;
+  return {
+    modelPrompt: prompt.slice(newline + newlineLength).replace(/^\r?\n/, ""),
+    originalPrompt: prompt,
+    userSignal: "disappointed",
+    userFeedback: line.slice(1).trim(),
+  };
 }
 
 export function impHome(): string {
@@ -218,6 +250,8 @@ export function writeSessionLog(telemetry: EvolutionTelemetry): string {
       type: "session",
       ...telemetry,
       prompt: redactSecrets(telemetry.prompt),
+      originalPrompt: telemetry.originalPrompt ? redactSecrets(telemetry.originalPrompt) : undefined,
+      userFeedback: telemetry.userFeedback ? redactSecrets(telemetry.userFeedback) : undefined,
       finalText: redactSecrets(telemetry.finalText || ""),
       events,
     },
@@ -233,6 +267,8 @@ export function makeEvolutionSuggestion(input: {
   finalText?: string;
   status: string;
   transport: string;
+  userSignal?: EvolutionUserSignal;
+  userFeedback?: string;
   threadId?: string;
   turnId?: string;
   eventLogPath?: string;
@@ -252,6 +288,13 @@ export function makeEvolutionSuggestion(input: {
     score -= 30;
     evidence.push("session produced no final assistant text");
     recommendation = "Tighten the imp's output rule so it always reports a final result or explicit blocker.";
+  }
+  if (input.userSignal === "disappointed") {
+    score -= 25;
+    evidence.push(input.userFeedback
+      ? `user marked this run for evolution: ${input.userFeedback}`
+      : "user marked this run for evolution");
+    recommendation = "Review this session for a prompt, command map, workflow, or error-recovery improvement.";
   }
 
   if (evidence.length === 0) return null;
@@ -328,6 +371,8 @@ export function evaluateTelemetry(telemetry: EvolutionTelemetry, eventLogPath: s
     finalText: telemetry.finalText,
     status: telemetry.status,
     transport: telemetry.transport,
+    userSignal: telemetry.userSignal,
+    userFeedback: telemetry.userFeedback,
     threadId: telemetry.threadId,
     turnId: telemetry.turnId,
     eventLogPath,
@@ -397,7 +442,7 @@ function compactEvent(event: unknown): unknown {
   return { truncated: true, preview: redacted.slice(0, 4_000) };
 }
 
-export function createEvolutionObserver(config: { name: string }, prompt: string): EvolutionObserver {
+export function createEvolutionObserver(config: { name: string }, prompt: string, signal?: Pick<EvolutionPromptSignal, "originalPrompt" | "userSignal" | "userFeedback">): EvolutionObserver {
   const disabled = process.env.IMP_EVOLUTION_DISABLED === "1";
   const events: unknown[] = [];
   const startedAt = new Date();
@@ -454,6 +499,9 @@ export function createEvolutionObserver(config: { name: string }, prompt: string
         const telemetry: EvolutionTelemetry = {
           imp: config.name,
           prompt,
+          originalPrompt: signal?.originalPrompt,
+          userSignal: signal?.userSignal,
+          userFeedback: signal?.userFeedback,
           finalText: effectiveFinalText,
           threadId: extra.threadId ?? threadId,
           turnId: extra.turnId ?? turnId,

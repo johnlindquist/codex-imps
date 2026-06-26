@@ -18,7 +18,7 @@ import { spawn, type ChildProcess } from "child_process";
 import { rmSync } from "fs";
 import type { ImpConfig } from "./isolated.ts";
 import { prepareIsolatedCodexHome } from "./codex-runtime.ts";
-import { createEvolutionObserver } from "./evolution.ts";
+import { createEvolutionObserver, parseEvolutionPromptSignal, type EvolutionPromptSignal } from "./evolution.ts";
 import { DEFAULT_IMP_MODEL, DEFAULT_IMP_REASONING_EFFORT } from "./defaults.ts";
 
 export interface TurnHandlers {
@@ -169,10 +169,14 @@ export class AppServerClient {
    * Streams notifications via handlers.onNotification. Resolves with the final
    * agent message text on turn/completed.
    */
-  async runTurn(prompt: string, handlers: TurnHandlers, opts?: { cwd?: string; effort?: string }): Promise<string> {
+  async runTurn(prompt: string, handlers: TurnHandlers, opts?: { cwd?: string; effort?: string; promptSignal?: Pick<EvolutionPromptSignal, "originalPrompt" | "userSignal" | "userFeedback"> }): Promise<string> {
     if (!this.ready) throw new Error("app-server not ready");
+    const parsed = opts?.promptSignal ? { modelPrompt: prompt, ...opts.promptSignal } : parseEvolutionPromptSignal(prompt);
+    const modelPrompt = parsed.modelPrompt;
+    const evolutionSignal = parsed.userSignal ? parsed : undefined;
+    if (!modelPrompt.trim()) throw new Error("missing prompt after leading + evolution feedback line");
     const threadId = await this.startThread();
-    const observer = createEvolutionObserver(this.config, prompt);
+    const observer = createEvolutionObserver(this.config, modelPrompt, evolutionSignal);
 
     return new Promise<string>((resolve, reject) => {
       let finalText = "";
@@ -212,7 +216,7 @@ export class AppServerClient {
       this.handlers.add(h);
       this.send("turn/start", {
         threadId,
-        input: [{ type: "text", text: prompt, text_elements: [] }],
+        input: [{ type: "text", text: modelPrompt, text_elements: [] }],
         cwd: opts?.cwd || process.cwd(),
         effort: opts?.effort || this.config.reasoningEffort || DEFAULT_IMP_REASONING_EFFORT,
       });

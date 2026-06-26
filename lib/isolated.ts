@@ -10,7 +10,7 @@ import { rmSync, unlinkSync, writeFileSync } from "fs";
 import { spawn } from "child_process";
 import { ensureWarmImp, runViaWarmImp, serveImp } from "./imp.ts";
 import { prepareIsolatedCodexHome } from "./codex-runtime.ts";
-import { createEvolutionObserver, evolutionStatusLine } from "./evolution.ts";
+import { createEvolutionObserver, evolutionStatusLine, parseEvolutionPromptSignal } from "./evolution.ts";
 import { DEFAULT_IMP_MODEL, DEFAULT_IMP_REASONING_EFFORT } from "./defaults.ts";
 
 export interface ImpConfig {
@@ -301,14 +301,20 @@ non-interactive path, or --no-warm for a cold one-off run.`);
   // Piped stdin becomes a temp file the imp can read with shell commands, so
   // `cat data.json | imp-jq --run "count users"` just works. TTY stdin is ignored;
   // an open-but-empty pipe yields "" and is also ignored.
-  let effectivePrompt = prompt;
+  const promptSignal = parseEvolutionPromptSignal(prompt);
+  const evolutionSignal = promptSignal.userSignal ? promptSignal : undefined;
+  let effectivePrompt = promptSignal.modelPrompt;
+  if (!effectivePrompt.trim()) {
+    console.error(`${config.name}: no prompt provided after leading + evolution feedback line`);
+    process.exit(1);
+  }
   let stdinFile: string | undefined;
   if (!process.stdin.isTTY) {
     const data = await Bun.stdin.text();
     if (data.trim()) {
       stdinFile = `/tmp/codex-imp-stdin-${config.name}-${process.pid}`;
       writeFileSync(stdinFile, data);
-      effectivePrompt = prompt + stdinPromptSuffix(stdinFile);
+      effectivePrompt = effectivePrompt + stdinPromptSuffix(stdinFile);
     }
   }
   const cleanupStdin = () => {
@@ -330,7 +336,7 @@ non-interactive path, or --no-warm for a cold one-off run.`);
     try {
       await runViaWarmImp(
         config.name,
-        { prompt: effectivePrompt, quiet, cwd: process.cwd(), effort },
+        { prompt: effectivePrompt, quiet, cwd: process.cwd(), effort, promptSignal: evolutionSignal },
         {
           onNotification: (method, params) => {
             if (method === "item/agentMessage/delta") streamedAnswer = true;
@@ -364,7 +370,7 @@ non-interactive path, or --no-warm for a cold one-off run.`);
   process.on("SIGTERM", onSignal);
 
   const thread = startThread();
-  const observer = createEvolutionObserver(config, effectivePrompt);
+  const observer = createEvolutionObserver(config, effectivePrompt, evolutionSignal);
 
   try {
     if (quiet) {
