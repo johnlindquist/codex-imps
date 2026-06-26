@@ -11,7 +11,7 @@ import { spawn } from "child_process";
 import { ensureWarmImp, runViaWarmImp, serveImp } from "./imp.ts";
 import { prepareIsolatedCodexHome } from "./codex-runtime.ts";
 import { createEvolutionObserver, evolutionStatusLine, parseEvolutionPromptSignal } from "./evolution.ts";
-import { DEFAULT_IMP_MODEL, DEFAULT_IMP_REASONING_EFFORT } from "./defaults.ts";
+import { DEFAULT_IMP_MODEL, DEFAULT_IMP_REASONING_EFFORT, parsePositiveMs } from "./defaults.ts";
 
 export interface ImpConfig {
   name: string;
@@ -140,6 +140,8 @@ export function parseArgs(argv: string[]) {
   // --effort <none|minimal|low|medium|high|xhigh>: per-turn reasoning override (warm imp path)
   const effortIdx = args.findIndex((a) => a === "--effort");
   const effort = effortIdx !== -1 ? args[effortIdx + 1] : undefined;
+  const turnTimeoutIdx = args.findIndex((a) => a === "--turn-timeout-ms" || a === "--timeout-ms");
+  const turnTimeoutMs = parsePositiveMs(turnTimeoutIdx !== -1 ? args[turnTimeoutIdx + 1] : undefined);
   const flags = [
     "-q", "--quiet",
     "-i", "--interactive",
@@ -151,10 +153,11 @@ export function parseArgs(argv: string[]) {
   // Drop the value following --effort only when --effort is actually present
   // (effortIdx === -1 would otherwise make effortIdx+1 === 0 and strip the first prompt word).
   const effortValueIdx = effortIdx !== -1 ? effortIdx + 1 : -1;
+  const turnTimeoutValueIdx = turnTimeoutIdx !== -1 ? turnTimeoutIdx + 1 : -1;
   const prompt = args
-    .filter((a, i) => !flags.includes(a) && a !== "--effort" && i !== effortValueIdx)
+    .filter((a, i) => !flags.includes(a) && a !== "--effort" && a !== "--turn-timeout-ms" && a !== "--timeout-ms" && i !== effortValueIdx && i !== turnTimeoutValueIdx)
     .join(" ");
-  return { interactive, quiet, help, serve, noWarm, run, effort, prompt, noArgs: args.length === 0 };
+  return { interactive, quiet, help, serve, noWarm, run, effort, turnTimeoutMs, prompt, noArgs: args.length === 0 };
 }
 
 // Renders streaming app-server JSON-RPC notifications (warm imp path).
@@ -223,7 +226,7 @@ function renderEvent(event: any) {
 
 export async function runImp(rawConfig: ImpConfig) {
   const config = rawConfig;
-  const { interactive, quiet, help, serve, noWarm, effort, prompt, noArgs } = parseArgs(process.argv);
+  const { interactive, quiet, help, serve, noWarm, effort, turnTimeoutMs, prompt, noArgs } = parseArgs(process.argv);
 
   if (help) {
     const displayModel = config.model || process.env.CODEX_IMP_MODEL || process.env.CODEX_PROFILE_MODEL || DEFAULT_IMP_MODEL;
@@ -238,6 +241,7 @@ Usage:
   ${config.name} --no-warm <prompt>  Opt out: force a cold in-process run (no warm imp)
   ${config.name} --serve             Run the warm imp server in the foreground (for supervisors)
   ${config.name} --effort <level>    Reasoning effort: none|minimal|low|medium|high|xhigh (warm imp)
+  ${config.name} --timeout-ms <ms>   Override warm turn timeout for this prompt
   ${config.name} --help              Show this help
 
 By default imps open the interactive Codex TUI. Use --run for the warm
@@ -336,7 +340,7 @@ non-interactive path, or --no-warm for a cold one-off run.`);
     try {
       await runViaWarmImp(
         config.name,
-        { prompt: effectivePrompt, quiet, cwd: process.cwd(), effort, promptSignal: evolutionSignal },
+        { prompt: effectivePrompt, quiet, cwd: process.cwd(), effort, turnTimeoutMs, promptSignal: evolutionSignal },
         {
           onNotification: (method, params) => {
             if (method === "item/agentMessage/delta") streamedAnswer = true;

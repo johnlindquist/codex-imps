@@ -19,7 +19,7 @@ import { rmSync } from "fs";
 import type { ImpConfig } from "./isolated.ts";
 import { prepareIsolatedCodexHome } from "./codex-runtime.ts";
 import { createEvolutionObserver, parseEvolutionPromptSignal, type EvolutionPromptSignal } from "./evolution.ts";
-import { DEFAULT_IMP_MODEL, DEFAULT_IMP_REASONING_EFFORT } from "./defaults.ts";
+import { DEFAULT_IMP_MODEL, DEFAULT_IMP_REASONING_EFFORT, impRpcTimeoutMs, impTurnTimeoutMs } from "./defaults.ts";
 
 export interface TurnHandlers {
   /** Raw app-server notification (method + params). */
@@ -106,7 +106,7 @@ export class AppServerClient {
     this.child.stdin!.write(JSON.stringify({ jsonrpc: "2.0", method, params }) + "\n");
   }
 
-  private awaitResponse(id: number, timeoutMs = 60000): Promise<any> {
+  private awaitResponse(id: number, timeoutMs = impRpcTimeoutMs()): Promise<any> {
     return new Promise((resolve, reject) => {
       const t = setTimeout(() => {
         this.handlers.delete(h);
@@ -169,7 +169,7 @@ export class AppServerClient {
    * Streams notifications via handlers.onNotification. Resolves with the final
    * agent message text on turn/completed.
    */
-  async runTurn(prompt: string, handlers: TurnHandlers, opts?: { cwd?: string; effort?: string; promptSignal?: Pick<EvolutionPromptSignal, "originalPrompt" | "userSignal" | "userFeedback"> }): Promise<string> {
+  async runTurn(prompt: string, handlers: TurnHandlers, opts?: { cwd?: string; effort?: string; turnTimeoutMs?: number; promptSignal?: Pick<EvolutionPromptSignal, "originalPrompt" | "userSignal" | "userFeedback"> }): Promise<string> {
     if (!this.ready) throw new Error("app-server not ready");
     const parsed = opts?.promptSignal ? { modelPrompt: prompt, ...opts.promptSignal } : parseEvolutionPromptSignal(prompt);
     const modelPrompt = parsed.modelPrompt;
@@ -184,7 +184,7 @@ export class AppServerClient {
         this.handlers.delete(h);
         observer.finish({ status: "timeout", transport: "app-server", finalText, threadId });
         reject(new Error(`turn timeout\nstderr:\n${this.stderrTail}`));
-      }, 120000);
+      }, opts?.turnTimeoutMs ?? impTurnTimeoutMs());
       const h = (msg: any) => {
         if (msg.__exit !== undefined) {
           clearTimeout(t); this.handlers.delete(h);

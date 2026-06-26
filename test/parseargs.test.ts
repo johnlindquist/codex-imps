@@ -44,6 +44,18 @@ test("--effort can trail the prompt", () => {
   expect(r.prompt).toBe("list my PRs");
 });
 
+test("--timeout-ms <ms> is parsed and removed from prompt", () => {
+  const r = parseArgs(argv("--run", "--timeout-ms", "600000", "audit this repo"));
+  expect(r.turnTimeoutMs).toBe(600000);
+  expect(r.prompt).toBe("audit this repo");
+});
+
+test("--turn-timeout-ms can trail the prompt", () => {
+  const r = parseArgs(argv("audit this repo", "--turn-timeout-ms", "900000"));
+  expect(r.turnTimeoutMs).toBe(900000);
+  expect(r.prompt).toBe("audit this repo");
+});
+
 test("-i sets interactive", () => {
   expect(parseArgs(argv("-i")).interactive).toBe(true);
 });

@@ -161,9 +161,12 @@ imp-gh --serve
 
 # Per-prompt reasoning override (warm path)
 imp-gh --run --effort minimal "what's my gh auth status"
+
+# Per-prompt warm turn timeout override (default: 5 minutes)
+imp-gh --run --timeout-ms 600000 "audit this repo"
 ```
 
-The auto-started warm imp is detached and persists after the call returns, so it stays warm for your next non-interactive prompt. Pass `--no-warm` whenever you want a one-off run that doesn't start or use the warm imp.
+The auto-started warm imp is detached and persists after the call returns, so it stays warm for your next non-interactive prompt. Pass `--no-warm` whenever you want a one-off run that doesn't start or use the warm imp. Warm turn timeout defaults to 300,000 ms and can be changed per call with `--timeout-ms` / `--turn-timeout-ms`, or globally with `CODEX_IMP_TURN_TIMEOUT_MS`. Warm startup readiness defaults to 120,000 ms via `CODEX_IMP_READY_TIMEOUT_MS`; app-server RPC/start waits default to 180,000 ms via `CODEX_IMP_START_TIMEOUT_MS`.
 
 **Edits hot-reload automatically.** A warm imp holds your imp's code in memory, so editing it would normally have no effect until you killed the process by hand. Instead, every call fingerprints the imp's source — the executable (its instructions, model, env) plus every `lib/*.ts` module it loads — and compares it to what the running warm imp was started with. If anything changed, the stale process is stopped and a fresh one is spawned **before** your prompt runs. So you can tweak an imp's internal prompt, swap the model, or change shared lib code and the **very next prompt respects the change** — no manual restart, no flag.
 

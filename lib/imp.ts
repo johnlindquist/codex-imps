@@ -25,12 +25,14 @@ import { spawn } from "child_process";
 import type { ImpConfig } from "./isolated.ts";
 import type { EvolutionPromptSignal } from "./evolution.ts";
 import { AppServerClient } from "./appserver.ts";
+import { impReadyTimeoutMs } from "./defaults.ts";
 
 type WarmImpRequest = {
   prompt: string;
   quiet: boolean;
   cwd: string;
   effort?: string;
+  turnTimeoutMs?: number;
   promptSignal?: Pick<EvolutionPromptSignal, "originalPrompt" | "userSignal" | "userFeedback">;
 };
 
@@ -184,7 +186,7 @@ export async function serveImp(config: ImpConfig): Promise<void> {
                 if (!req.quiet) send({ type: "notif", method, params });
               },
             },
-            { cwd: req.cwd, effort: req.effort, promptSignal: req.promptSignal },
+            { cwd: req.cwd, effort: req.effort, turnTimeoutMs: req.turnTimeoutMs, promptSignal: req.promptSignal },
           );
           send({ type: "final", text: finalText });
           send({ type: "done" });
@@ -303,7 +305,7 @@ export async function stopWarmImp(name: string, pid?: number): Promise<void> {
  * spawn a fresh one — so editing an imp's instructions/model, or any lib/*.ts,
  * takes effect on the very next prompt.
  */
-export async function ensureWarmImp(config: ImpConfig, readyTimeoutMs = 30000): Promise<boolean> {
+export async function ensureWarmImp(config: ImpConfig, readyTimeoutMs = impReadyTimeoutMs()): Promise<boolean> {
   const sock = socketPath(config.name);
   const current = sourceFingerprint(config);
 
