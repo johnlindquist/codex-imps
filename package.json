@@ -31,6 +31,7 @@
     "imp-browser-automate": "./imps/imp-browser-automate",
     "imp-codex": "./imps/imp-codex",
     "imp-minimal": "./imps/imp-minimal",
+    "imp-monkeys": "./imps/imp-monkeys",
     "imp-ffmpeg": "./imps/imp-ffmpeg",
     "imp-imagemagick": "./imps/imp-imagemagick",
     "imp-yt-dlp": "./imps/imp-yt-dlp",
