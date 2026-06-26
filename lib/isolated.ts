@@ -133,8 +133,7 @@ export function parseArgs(argv: string[]) {
   const args = argv.slice(2);
   const quiet = args.includes("-q") || args.includes("--quiet");
   const help = args.includes("--help") || args.includes("-h");
-  // --daemon is a back-compat alias from before the imp rename.
-  const serve = args.includes("--serve") || args.includes("--daemon");
+  const serve = args.includes("--serve");
   const noWarm = args.includes("--no-warm");
   const run = args.includes("--run") || args.includes("--exec") || args.includes("--non-interactive");
   const interactive = args.includes("-i") || args.includes("--interactive") || (!run && !quiet && !serve && !noWarm && !help);
@@ -145,7 +144,7 @@ export function parseArgs(argv: string[]) {
     "-q", "--quiet",
     "-i", "--interactive",
     "--help", "-h",
-    "--serve", "--daemon",
+    "--serve",
     "--no-warm",
     "--run", "--exec", "--non-interactive",
   ];

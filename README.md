@@ -1,6 +1,6 @@
 # codex-imps
 
-Single-purpose, isolated [Codex SDK](https://www.npmjs.com/package/@openai/codex-sdk) agents — **imps** — for common CLI tools. An imp is a small, fast daemon-spirit bound to exactly one tool. Each imp runs with ~6K input tokens instead of the default ~22K — faster, cheaper, and focused. Interactive mode is **on by default**; explicit non-interactive runs use a warm background imp for ~2x lower latency.
+Single-purpose, isolated [Codex SDK](https://www.npmjs.com/package/@openai/codex-sdk) agents — **imps** — for common CLI tools. An imp is small, fast, and bound to exactly one tool. Each imp runs with ~6K input tokens instead of the default ~22K — faster, cheaper, and focused. Interactive mode is **on by default**; explicit non-interactive runs use a warm background imp for ~2x lower latency.
 
 All imps start with `imp-` so you can type `imp-` and tab-complete to summon the whole roster.
 
@@ -59,6 +59,7 @@ bun imps/imp-gh
 | `imp-bird` | [bird](https://www.npmjs.com/package/bird) | Twitter/X CLI |
 | `imp-browser` | [agent-browser](https://www.npmjs.com/package/agent-browser) | Browser automation (hidden/headless browser it owns) |
 | `imp-browser-automate` | [agent-browser](https://www.npmjs.com/package/agent-browser) | Drives your **live** Chrome over CDP — your real tabs, logins, session |
+| `imp-codex` | [codex](https://www.npmjs.com/package/@openai/codex) | Codex CLI, SDK, app-server, and codex-imps runtime maintenance |
 | `imp-ffmpeg` | [ffmpeg](https://ffmpeg.org) | Video/audio: probe, convert, trim, scale, extract, GIFs (never overwrites inputs) |
 | `imp-imagemagick` | [magick](https://imagemagick.org) | Images: identify, resize, crop, convert, montage (never overwrites originals) |
 | `imp-yt-dlp` | [yt-dlp](https://github.com/yt-dlp/yt-dlp) | Video downloads: formats, audio-only, subtitles, playlists (guarded bulk) |

@@ -15,6 +15,8 @@ test("routes by keyword to the right imp", () => {
   expect(which("trim the first 10 seconds off intro.mp4").out).toBe("imp-ffmpeg");
   expect(which("run the dev server in a right split").out).toBe("imp-cmux");
   expect(which("any unread email from alice?").out).toBe("imp-gmail");
+  expect(which("How many DESIGN.md files can you find on github that have been created in the past 2 months?").out).toBe("imp-github-examples");
+  expect(which("check the codex app-server runtime").out).toBe("imp-codex");
 });
 
 test("explicit tool prefix routes deterministically", () => {

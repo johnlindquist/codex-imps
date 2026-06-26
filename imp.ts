@@ -35,9 +35,11 @@ interface Route {
 // Ordered most-specific first: earlier routes win score ties.
 const ROUTES: Route[] = [
   { imp: "imp-cmux-extensions", pattern: /\b(cmux extension|dock control|custom sidebar|palette (command|action))\b/i, hint: "persistent cmux extensions" },
+  { imp: "imp-codex", pattern: /\b(codex cli|codex sdk|codex app-server|codex auth|codex-imps|imp runtime|isolated codex|imp-codex)\b/i, hint: "Codex CLI and imp runtime" },
   { imp: "imp-cmux", pattern: /\b(cmux|workspace|pane|surface|split|tmux)\b/i, hint: "terminal workspaces" },
   { imp: "imp-browser-automate", pattern: /\b(my (chrome|browser)|current tab|live tab|logged.?in (page|site|session)|real browser)\b/i, hint: "your live Chrome" },
   { imp: "imp-browser", pattern: /\b(browser|web ?page|website|snapshot|form fill|headless)\b/i, hint: "hidden browser automation" },
+  { imp: "imp-github-examples", pattern: /\b(github examples?|examples? on github|borrow from github|open.?source examples?|reference implementations?|created in the past|created (within|in) the last|recent github examples?|[A-Za-z0-9_.-]+\.(md|ts|tsx|js|jsx|py|rs|go|rb|java|kt|swift|json|yaml|yml|toml))\b/i, hint: "GitHub example search" },
   { imp: "imp-gh", pattern: /\b(github|gh|pull request|prs?|issues?|ci run|workflow run|releases?|repo)\b/i, hint: "GitHub" },
   { imp: "imp-git", pattern: /\b(git|commits?|branch(es)?|stash|staged|unstaged|merge|rebase|push|pull)\b/i, hint: "local git" },
   { imp: "imp-docker", pattern: /\b(docker|containers?|compose|dockerfile|images?)\b/i, hint: "containers" },

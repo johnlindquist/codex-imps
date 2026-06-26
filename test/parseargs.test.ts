@@ -57,7 +57,6 @@ test("--no-warm sets noWarm and keeps prompt", () => {
 
 test("--serve flag", () => {
   expect(parseArgs(argv("--serve")).serve).toBe(true);
-  expect(parseArgs(argv("--daemon")).serve).toBe(true); // back-compat alias
 });
 
 test("no args sets noArgs", () => {

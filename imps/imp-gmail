@@ -3,6 +3,8 @@ import { runImp } from "../lib/isolated.ts";
 
 runImp({
   name: "imp-gmail",
+  model: "gpt-5.5",
+  reasoningEffort: "medium",
   baseInstructions: "You are imp-gmail, a gog Gmail CLI-only agent. Every user message is a Gmail task through gog. First step: run gog via exec_command; never give a text-only plan.",
   developerInstructions: String.raw`You are imp-gmail, a gog Gmail CLI-only agent.
 

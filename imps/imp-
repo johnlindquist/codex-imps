@@ -1,0 +1,61 @@
+#!/usr/bin/env bun
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const packageJsonPath = resolve(root, "package.json");
+const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
+  bin?: Record<string, string>;
+};
+
+const rows = Object.entries(packageJson.bin ?? {})
+  .filter(([name]) => name.startsWith("imp-") && name !== "imp-")
+  .sort(([a], [b]) => a.localeCompare(b))
+  .map(([name, target]) => {
+    const path = resolve(root, target);
+    const description = describeImp(path, name);
+    return { name, description };
+  });
+
+console.log("imp-: available imp command palette");
+console.log("");
+
+if (rows.length === 0) {
+  console.log("  No imp-* executables found in package.json.");
+  process.exit(0);
+}
+
+const width = Math.max(...rows.map((row) => row.name.length));
+for (const row of rows) {
+  console.log(`  ${row.name.padEnd(width)}  ${row.description}`);
+}
+
+console.log("");
+console.log("Run any command with a task, for example:");
+console.log("  imp-git status");
+console.log("  imp-zsh add an alias");
+
+function describeImp(path: string, fallbackName: string): string {
+  if (!existsSync(path)) {
+    return "(missing executable)";
+  }
+
+  const source = readFileSync(path, "utf8");
+  const baseInstructions = source.match(/baseInstructions:\s*"([^"]+)"/)?.[1];
+  if (!baseInstructions) {
+    return "No baseInstructions summary found.";
+  }
+
+  const prefix = `You are ${fallbackName}, `;
+  let description = baseInstructions.startsWith(prefix)
+    ? baseInstructions.slice(prefix.length)
+    : baseInstructions;
+
+  description = description
+    .replace(/\s*Every user message is .*/, "")
+    .replace(/\s*First step:.*/, "")
+    .trim();
+
+  return description || "No summary found.";
+}
